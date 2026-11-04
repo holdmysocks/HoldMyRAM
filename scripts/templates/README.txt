@@ -70,7 +70,9 @@ Limits
 
 Licence
 -------
-All rights reserved by the author; not yet licensed for redistribution.
+HoldMyRAM is free software under the GNU General Public License, version 3
+(see LICENSE.txt). It comes with NO WARRANTY. The source code is at
+https://github.com/holdmysocks/HoldMyRAM
 Third-party components are listed in THIRD-PARTY-NOTICES.txt.
 
 Updates

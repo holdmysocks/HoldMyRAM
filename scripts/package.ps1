@@ -62,7 +62,9 @@ foreach ($t in 'README.txt', 'Start here.txt') {
 }
 
 # LICENSE notice for the project itself
-$own = "HoldMyRAM $version`r`nAll rights reserved by the author; not yet licensed for redistribution.`r`nThird-party components and their licences: see THIRD-PARTY-NOTICES.txt.`r`n"
+$licenseFile = Join-Path $PSScriptRoot '..\LICENSE'
+if (-not (Test-Path $licenseFile)) { throw "LICENSE not found at the repo root ($licenseFile)." }
+$own = "HoldMyRAM $version`r`n`r`n" + ((Get-Content -Raw $licenseFile) -replace "`r?`n", "`r`n").TrimEnd() + "`r`n`r`nThird-party components and their licences: see THIRD-PARTY-NOTICES.txt.`r`n"
 [System.IO.File]::WriteAllText((Join-Path $stage 'LICENSE.txt'), $own, $utf8)
 
 # Third-party notices from cargo metadata (normal deps only, Windows target)
@@ -95,7 +97,7 @@ $nl = "`r`n"
 $sb = New-Object System.Text.StringBuilder
 [void]$sb.Append("THIRD-PARTY NOTICES - HoldMyRAM $version$nl")
 [void]$sb.Append("========================================$nl$nl")
-[void]$sb.Append("HoldMyRAM itself: All rights reserved by the author; not yet licensed for redistribution.$nl$nl")
+[void]$sb.Append("HoldMyRAM itself: GNU General Public License, version 3 (see LICENSE.txt). Source code: https://github.com/holdmysocks/HoldMyRAM$nl$nl")
 [void]$sb.Append("HoldMyRAM includes the open-source components below (runtime dependency graph of$nl")
 [void]$sb.Append("holdmyram.exe and holdmyram-helper.exe on x86_64 Windows; dev dependencies excluded).$nl$nl")
 [void]$sb.Append("Vendored component: muda 0.20.0 (Apache-2.0 OR MIT) is bundled in vendor/muda with one$nl")
