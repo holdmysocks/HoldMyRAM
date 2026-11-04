@@ -12,12 +12,34 @@ const KINDS = [
   ['startup', 'Startup'], ['task', 'Tasks'], ['app', 'Apps'],
 ];
 const KIND_NOTE = {
-  service: 'Services are shown for information. Closing services is not supported yet.',
+  service: 'Tick a service to have it stopped when you turn the toggle on. The ... button on a row changes its start type for good (until undone). Core Windows services are blocked and cannot be selected.',
   startup: 'Startup items run when you log in to Windows. Use the switch to stop one starting at login; every change is logged and can be undone. This is separate from the RAM toggle and hotkey, which do not apply to startup items. Items that need administrator rights are shown read-only.',
-  task: 'Scheduled tasks are shown for information. Disabling them is not supported yet.',
+  task: 'Tick a task to have it disabled when you turn the toggle on. The ... button on a row turns it on or off for good (until undone). Blocked tasks cannot be selected.',
   app: 'Installed apps are shown for information. Only running processes can be closed for now.',
-  all: 'The toggle and hotkey only close running processes. Startup items have their own switch (it affects login only); services, tasks and apps are information only.',
+  all: 'The toggle and hotkey close selected processes, stop selected services and disable selected tasks. Startup items have their own switch (it affects login only); apps are information only.',
 };
+const ADMIN_TAB_NOTE = 'Needs administrator approval. Selected services are stopped and selected tasks are disabled when you turn the toggle ON, and restored when you turn it OFF. Turning ON raises one UAC prompt. The prompt can pull a full-screen game out of full-screen, so approve ahead of time with the "Arm admin helper" button. If you decline the prompt, only processes are closed.';
+const REASON_TEXT = {
+  foreground: 'it is the app you are using (or part of it), so it was left running',
+  self_process: 'it is HoldMyRAM itself',
+  protected: 'it is a protected system process',
+  never_touch: 'it is on the never-touch list and is never changed',
+  protected_dependent: 'stopping it would also stop a protected service',
+  locked: 'Windows does not allow this change, even for an administrator',
+  not_stoppable: 'the service does not accept a stop request',
+  not_found: 'it no longer exists',
+  invalid: 'the name or path was not valid',
+  not_armed: 'the admin helper was not running',
+  uac_cancelled: 'administrator approval was declined',
+  helper_failed: 'the admin helper could not be started or stopped responding',
+  timeout: 'it took too long',
+  already_done: 'it was already in the wanted state',
+  changed_by_user: 'you changed it afterwards, so it was left as you set it',
+  ambiguous: 'it was selected twice with different methods',
+};
+const START_LABEL = { Auto: 'Automatic', AutoDelayed: 'Automatic (delayed)', Manual: 'Manual', Disabled: 'Disabled', enabled: 'enabled', disabled: 'disabled' };
+const METHOD_LABEL = { service: 'Stop', task: 'Disable' };
+const METHOD_WIRE = { process: 'close', service: 'stop', task: 'disable' };
 const ADMIN_NOTE = 'Needs administrator rights, not changeable here yet';
 const RISK_ORDER = { suggested: 0, caution: 1, unrated: 2, dangerous: 3 };
 
@@ -33,6 +55,9 @@ const S = {
   scanning: false,
   expanded: new Set(),
   pending: new Set(),   // startup rows with a change in flight
+  helper: { armed: false, arming: false, last_error: null, toggle_declined: false, admin_pending: 0 },
+  selMap: null,         // selection key (kind|name) -> scan row, rebuilt lazily
+  adminBusy: false,
 };
 
 /* ---------- helpers ---------- */
@@ -103,9 +128,26 @@ function sels() {
   const p = activeProfile();
   return p ? p.selections : S.cfg.selections;
 }
-function selIndex(name) {
-  const n = norm(name);
-  return sels().findIndex(s => norm(s.name) === n);
+/** Selections are keyed by kind + name, so a process and a service with the same name never collide. */
+const selKey = (kind, name) => (kind || 'process') + '|' + norm(name);
+/** Admin-capable (service/task) row that can be selected: not blocked, has a target. */
+const isAdminSel = r => !!(r.admin && r.admin.actionable && r.admin.target && (r.kind === 'service' || r.kind === 'task'));
+/** Can this row be put in a selection at all. */
+const selectable = r => r.actionable || isAdminSel(r);
+/** The name stored in a selection for this row. */
+const selName = r => (isAdminSel(r) ? r.admin.target : r.name);
+const rowSelKey = r => selKey(r.kind, selName(r));
+const selKindOf = s => s.kind || 'process';
+function selIndex(kind, name) {
+  const k = selKey(kind, name);
+  return sels().findIndex(s => selKey(selKindOf(s), s.name) === k);
+}
+function selRow(s) {
+  if (!S.selMap) {
+    S.selMap = new Map();
+    for (const r of S.rows) if (selectable(r) || r.admin) S.selMap.set(rowSelKey(r), r);
+  }
+  return S.selMap.get(selKey(selKindOf(s), s.name)) || null;
 }
 function isDirty() { return S.cfg && JSON.stringify(S.cfg) !== S.savedJson; }
 
@@ -118,6 +160,9 @@ function setConfig(cfg, markSaved) {
   S.cfg = cfg;
   cfg.selections = cfg.selections || [];
   cfg.profiles = cfg.profiles || [];
+  const fix = s => { if (!s.kind) s.kind = 'process'; };
+  cfg.selections.forEach(fix);
+  cfg.profiles.forEach(p => (p.selections = p.selections || []).forEach(fix));
   if (markSaved) S.savedJson = JSON.stringify(cfg);
   applyTheme();
 }
@@ -133,16 +178,28 @@ function renderHeader() {
   pill.textContent = busy ? 'WORKING' : active ? 'ON (apps closed)' : 'OFF';
   const btn = $('toggle-btn');
   btn.textContent = active ? 'Turn off (restore)' : 'Turn on (free RAM)';
-  const n = S.cfg ? sels().length : 0;
-  btn.disabled = !!busy || (!active && n === 0);
-  btn.title = !active && n === 0 ? 'Select at least one process first' : '';
-
-  let ram = 0;
-  if (S.cfg) for (const s of sels()) {
-    const r = S.byKey.get('process|' + norm(s.name));
-    if (r) ram += r.ram_bytes;
+  const cur = S.cfg ? sels() : [];
+  const n = cur.length;
+  let ram = 0, nAdmin = 0;
+  const blocked = [];
+  for (const s of cur) {
+    const r = selRow(s);
+    const kd = selKindOf(s);
+    if (kd !== 'process') nAdmin++;
+    if (r) {
+      ram += r.ram_bytes || 0;
+      if (kd !== 'process' && r.admin && r.admin.blocked) blocked.push(r.display || s.name);
+    }
   }
-  $('sel-summary').textContent = n + ' selected' + (ram ? ', about ' + fmtRam(ram) + ' in use' : '');
+  btn.disabled = !!busy || (!active && n === 0) || (!active && blocked.length > 0);
+  btn.title = !active && blocked.length
+    ? 'The selection contains blocked items (' + blocked.slice(0, 3).join(', ') + (blocked.length > 3 ? ', ...' : '') + '). Untick them first.'
+    : !active && n === 0 ? 'Select at least one item first'
+    : !active && nAdmin && !S.helper.armed ? 'Turning on raises one administrator (UAC) prompt for the selected services/tasks'
+    : '';
+  $('sel-summary').textContent = n + ' selected' + (nAdmin ? ' (' + nAdmin + ' service/task)' : '') +
+    (ram ? ', about ' + fmtRam(ram) + ' in use' : '');
+  renderHelper();
 
   const save = $('save-btn');
   const dirty = isDirty();
@@ -172,10 +229,87 @@ function renderHeader() {
   const he = st && st.hotkey && st.hotkey.error;
   wh.hidden = !he;
   wh.textContent = he ? 'Hotkey: ' + he : '';
-  const lr = $('last-report');
-  lr.hidden = !(st && st.last_report);
-  lr.textContent = st && st.last_report ? 'Last toggle: ' + st.last_report : '';
+  renderReport(st && st.last_report);
 }
+
+/** Last toggle report. The state carries a one-line summary; a structured report
+ *  ({action, acted[], skipped[], failed[], error}) is shown per item when present. */
+function renderReport(rep) {
+  const lr = $('last-report');
+  lr.replaceChildren();
+  if (!rep || (typeof rep === 'object' && !rep.action && !rep.error)) { lr.hidden = true; return; }
+  lr.hidden = false;
+  if (typeof rep === 'string') { lr.textContent = 'Last toggle: ' + friendlySummary(rep); return; }
+  if (rep.error) { lr.textContent = 'Last toggle: refused: ' + rep.error; return; }
+  const a = rep.acted || [], s = rep.skipped || [], f = rep.failed || [];
+  lr.appendChild(document.createTextNode('Last toggle (' + (rep.action === 'revert' ? 'restore' : 'turn on') + '): ' +
+    a.length + ' done, ' + s.length + ' skipped, ' + f.length + ' failed'));
+  const ul = el('ul');
+  const add = (label, it, cls) => {
+    const what = it.kind === 'service' ? 'service ' : it.kind === 'task' ? 'task ' : '';
+    const why = it.reason ? ' because ' + (REASON_TEXT[it.reason] || it.reason.replace(/_/g, ' ')) : '';
+    const li = el('li', cls, label + ' ' + what + it.name + why + (!it.reason && it.detail ? ': ' + it.detail : ''));
+    ul.appendChild(li);
+  };
+  a.forEach(i => add('Done:', i));
+  s.forEach(i => add('Skipped:', i));
+  f.forEach(i => add('Failed:', i, 'fail'));
+  if (ul.childNodes.length) lr.appendChild(ul);
+}
+
+function friendlySummary(t) {
+  return t.replace(/need admin approval/, 'need administrator approval (they stay pending; toggle off again to retry)');
+}
+
+/* ---------- admin helper status ---------- */
+
+function renderHelper() {
+  const h = S.helper;
+  const pill = $('helper-pill');
+  const state = h.arming ? 'wait' : h.armed ? 'on' : 'off';
+  pill.className = 'pill ' + state;
+  pill.textContent = h.arming ? 'waiting for approval' : h.armed ? 'armed' : 'off';
+  $('helper-spin').hidden = !h.arming;
+  const arm = $('helper-arm');
+  arm.hidden = h.armed;
+  arm.disabled = h.arming;
+  arm.textContent = h.arming ? 'Waiting for approval...' : 'Arm admin helper';
+  $('helper-disarm').hidden = !h.armed;
+  $('helper-disarm').disabled = !!(S.state && S.state.busy);
+  const er = $('helper-err');
+  er.hidden = !h.last_error;
+  er.textContent = h.last_error ? 'Last error: ' + h.last_error : '';
+  $('warn-declined').hidden = !h.toggle_declined;
+  $('warn-pending').hidden = !(h.admin_pending > 0);
+}
+
+async function refreshHelper() {
+  try {
+    S.helper = await invoke('helper_status');
+  } catch (_) { /* keep the last known status */ }
+  renderHelper();
+}
+
+$('helper-arm').onclick = async () => {
+  if (S.helper.arming) return;
+  S.helper = Object.assign({}, S.helper, { arming: true });
+  renderHelper();
+  try {
+    S.helper = await invoke('arm_helper');
+    showErr('');
+  } catch (e) {
+    showErr('Could not arm the admin helper: ' + e);
+    await refreshHelper();
+  }
+  renderHeader();
+};
+$('helper-disarm').onclick = async () => {
+  try {
+    await invoke('disarm_helper');
+  } catch (e) { showErr('Could not disarm the admin helper: ' + e); }
+  await refreshHelper();
+  renderHeader();
+};
 
 /* ---------- list ---------- */
 
@@ -189,12 +323,12 @@ function buildView() {
   const hideMs = $('hide-ms').checked;
   const onlySel = $('only-selected').checked;
   const sort = $('sort').value;
-  const selSet = new Set(sels().map(s => norm(s.name)));
+  const selSet = new Set(sels().map(s => selKey(selKindOf(s), s.name)));
   const out = [];
   for (const r of S.rows) {
     if (S.tab !== 'all' && r.kind !== S.tab) continue;
     if (hideMs && isMsTask(r)) continue;
-    if (onlySel && !(r.kind === 'process' && selSet.has(norm(r.name)))) continue;
+    if (onlySel && !(selectable(r) && selSet.has(rowSelKey(r)))) continue;
     if (q && !(r._hay || (r._hay = (r.name + ' ' + r.display + ' ' + r.detail).toLowerCase())).includes(q)) continue;
     out.push(r);
   }
@@ -227,6 +361,9 @@ function renderTabs() {
   const note = $('kind-note');
   note.hidden = false;
   note.textContent = KIND_NOTE[S.tab] || '';
+  const an = $('admin-note');
+  an.hidden = !(S.tab === 'service' || S.tab === 'task');
+  an.textContent = ADMIN_TAB_NOTE;
 }
 
 function renderList(reset) {
@@ -269,13 +406,16 @@ function moreButton() {
 
 function buildRow(r) {
   const k = key(r);
-  const idx = r.actionable ? selIndex(r.name) : -1;
+  const can = selectable(r);
+  const idx = can ? selIndex(r.kind, selName(r)) : -1;
   const isStartup = r.kind === 'startup';
-  const row = el('div', 'row' + (idx >= 0 ? ' sel' : '') + (r.actionable || (isStartup && r.can_change) ? '' : ' ro'));
+  const isAdminKind = r.kind === 'service' || r.kind === 'task';
+  const blockedWhy = isAdminKind && r.admin && r.admin.blocked ? r.admin.blocked : '';
+  const row = el('div', 'row' + (idx >= 0 ? ' sel' : '') + (can || (isStartup && r.can_change) ? '' : ' ro'));
   row.dataset.key = k;
   const line = el('div', 'line');
 
-  if (r.actionable) {
+  if (can) {
     const cb = el('input');
     cb.type = 'checkbox';
     cb.checked = idx >= 0;
@@ -283,10 +423,12 @@ function buildRow(r) {
     cb.setAttribute('aria-label', 'Select ' + r.display);
     line.appendChild(cb);
   } else {
-    const t = el('span', 'tag', 'info');
-    t.title = isStartup
+    // The first grid column is 28px wide, so keep this glyph/word short.
+    const t = el('span', 'tag lead', blockedWhy ? '\u{1F512}' : 'info');
+    t.setAttribute('aria-label', blockedWhy ? 'Blocked' : 'Information only');
+    t.title = blockedWhy ? blockedWhy : isStartup
       ? 'The RAM toggle does not apply to startup items; they only affect what starts at login.'
-      : 'Not actionable yet: the toggle can only close processes.';
+      : 'Information only: the toggle cannot act on this kind of item.';
     line.appendChild(t);
   }
 
@@ -294,8 +436,9 @@ function buildRow(r) {
   name.title = r.name;
   name.dataset.act = 'expand';
   if (isStartup) name.appendChild(el('small', '', r.can_change ? 'startup, applies at login' : 'startup, read-only'));
-  else if (!r.actionable) name.appendChild(el('small', '', r.kind + ', not actionable yet'));
-  else if (r.pids.length > 1) name.appendChild(el('small', '', r.pids.length + ' processes'));
+  else if (blockedWhy) name.appendChild(el('small', '', 'blocked'));
+  else if (!can) name.appendChild(el('small', '', r.kind + ', information only'));
+  else if (r.pids && r.pids.length > 1 && r.kind === 'process') name.appendChild(el('small', '', r.pids.length + ' processes'));
   line.appendChild(name);
 
   line.appendChild(el('span', 'cell-ram', fmtRam(r.ram_bytes)));
@@ -317,6 +460,12 @@ function buildRow(r) {
     m.value = idx >= 0 ? (sels()[idx].method || 'close') : 'close';
     m.disabled = idx < 0;
     line.appendChild(m);
+  } else if (can) {
+    // Services and tasks have one fixed method.
+    const lab = el('span', 'fixed-method', METHOD_LABEL[r.kind]);
+    lab.title = r.kind === 'service' ? 'Stopped when you turn the toggle on, started again when you turn it off.'
+      : 'Disabled when you turn the toggle on, enabled again when you turn it off.';
+    line.appendChild(lab);
   } else if (isStartup && r.can_change) {
     const sw = el('label', 'switch' + (r.running ? ' on' : ''));
     const cb = el('input');
@@ -332,6 +481,19 @@ function buildRow(r) {
     line.appendChild(el('span'));
   }
 
+  if (isAdminKind) {
+    const mb = el('button', 'morebtn', '...');
+    mb.dataset.act = 'more';
+    const ok = !blockedWhy && r.admin && r.admin.target;
+    mb.disabled = !ok;
+    mb.title = !ok ? (blockedWhy || 'This item cannot be changed from here')
+      : r.kind === 'service' ? 'Change start type... (a lasting change)' : (r.running ? 'Disable task... (a lasting change)' : 'Enable task... (a lasting change)');
+    mb.setAttribute('aria-label', mb.title);
+    line.appendChild(mb);
+  } else {
+    line.appendChild(el('span'));
+  }
+
   const x = el('button', 'expander', S.expanded.has(k) ? '▾' : '▸');
   x.dataset.act = 'expand';
   x.setAttribute('aria-label', 'Show explanation');
@@ -339,6 +501,7 @@ function buildRow(r) {
 
   row.appendChild(line);
   if (isStartup && !r.can_change) row.appendChild(el('div', 'ro-note', ADMIN_NOTE));
+  if (blockedWhy) row.appendChild(el('div', 'ro-note', 'Blocked: ' + blockedWhy));
   if (S.expanded.has(k)) row.appendChild(buildDetails(r));
   return row;
 }
@@ -364,8 +527,14 @@ function buildDetails(r) {
       ? 'The switch controls whether this item starts when you log in. '
       : ADMIN_NOTE + '. ') +
       'The RAM toggle and hotkey do not apply to startup items.'));
+  } else if (r.admin && r.admin.blocked && (r.kind === 'service' || r.kind === 'task')) {
+    d.appendChild(el('p', 'bad-text', 'Blocked: ' + r.admin.blocked + '. HoldMyRAM will never change this item.'));
+  } else if (isAdminSel(r)) {
+    d.appendChild(el('p', 'muted', 'Needs administrator approval. ' + (r.kind === 'service'
+      ? 'When selected, it is stopped when you turn the toggle on and started again when you turn it off. Its start type is not changed.'
+      : 'When selected, it is disabled when you turn the toggle on and enabled again when you turn it off.')));
   } else if (!r.actionable) {
-    d.appendChild(el('p', 'muted', 'Not actionable yet: the toggle can currently only close, suspend or kill running processes.'));
+    d.appendChild(el('p', 'muted', 'Information only: the toggle cannot act on this item.'));
   }
   return d;
 }
@@ -378,6 +547,12 @@ function refreshRow(rowEl, r) {
 /* ---------- list events (delegated) ---------- */
 
 $('list').addEventListener('click', e => {
+  const more = e.target.closest('[data-act="more"]');
+  if (more) {
+    const rr = S.byKey.get(more.closest('.row').dataset.key);
+    if (rr && !more.disabled) openChange(rr);
+    return;
+  }
   const t = e.target.closest('[data-act="expand"]');
   if (!t) return;
   const rowEl = t.closest('.row');
@@ -397,31 +572,46 @@ $('list').addEventListener('change', async e => {
     await onStartupSwitch(r, t.checked);
     return;
   }
-  if (!r || !r.actionable) return;
+  if (!r || !selectable(r)) return;
+  const nm = selName(r);
   if (t.dataset.act === 'select') {
     if (t.checked) {
       if (r.risk === 'dangerous') {
-        const ok = await ask({
-          title: 'Dangerous item',
-          text: r.display + ' is rated Dangerous.\n\n' + r.summary + (r.notes ? '\n\n' + r.notes : '') +
-            '\n\nClosing it can break Windows or hardware features. Select it anyway?',
-          ok: 'Select anyway', danger: true,
-        });
+        const admin = isAdminSel(r);
+        const text = r.display + ' is rated Dangerous.\n\n' + r.summary + (r.notes ? '\n\n' + r.notes : '') +
+          (admin
+            ? '\n\nStopping or disabling it can break Windows or hardware features.'
+            : '\n\nClosing it can break Windows or hardware features. Select it anyway?');
+        const ok = admin
+          ? await askTyped({ title: 'Dangerous ' + r.kind, text, expect: [r.display, nm], ok: 'Select anyway' })
+          : await ask({ title: 'Dangerous item', text, ok: 'Select anyway', danger: true });
         if (!ok) { t.checked = false; return; }
       }
-      if (selIndex(r.name) < 0) sels().push({ name: r.name, method: 'close' });
+      if (selIndex(r.kind, nm) < 0) sels().push({ name: nm, method: METHOD_WIRE[r.kind] || 'close', kind: r.kind });
     } else {
-      const i = selIndex(r.name);
+      const i = selIndex(r.kind, nm);
       if (i >= 0) sels().splice(i, 1);
     }
     if ($('only-selected').checked && !t.checked) renderList(false); else refreshRow(rowEl, r);
     renderHeader();
-  } else if (t.dataset.act === 'method') {
-    const i = selIndex(r.name);
+  } else if (t.dataset.act === 'method' && r.actionable) {
+    const i = selIndex(r.kind, nm);
     if (i >= 0) sels()[i].method = t.value;
     renderHeader();
   }
 });
+
+/** Dangerous services/tasks: the user must type the item's name. Resolves true/false. */
+async function askTyped({ title, text, expect, ok }) {
+  const want = expect.filter(Boolean);
+  let msg = text + '\n\nType "' + want[0] + '" to confirm.';
+  for (;;) {
+    const v = await ask({ title, text: msg, input: '', ok, danger: true });
+    if (v === null || v === false) return false;
+    if (want.some(w => norm(w) === norm(v))) return true;
+    msg = text + '\n\nThat does not match. Type "' + want[0] + '" to confirm.';
+  }
+}
 
 /* ---------- startup items ---------- */
 
@@ -486,42 +676,65 @@ async function onStartupSwitch(r, want) {
   await setStartup(r, want);
 }
 
+const startLabel = v => START_LABEL[v] || String(v);
+
+/** The Changes panel: startup changes and admin (service/task) changes, newest first. */
 async function renderStartupChanges() {
   const box = $('startup-list');
-  let list = [];
+  const items = [];
+  const problems = [];
   try {
-    list = await invoke('startup_changes');
-  } catch (e) {
-    box.replaceChildren(el('p', 'bad-text', 'Could not read the changes: ' + e));
-    return;
-  }
+    for (const c of await invoke('startup_changes')) items.push({ src: 'startup', at: c.at || '', c });
+  } catch (e) { problems.push('Could not read startup changes: ' + e); }
+  try {
+    for (const c of await invoke('admin_changes')) items.push({ src: 'admin', at: c.at || '', c });
+  } catch (e) { problems.push('Could not read service/task changes: ' + e); }
+  // Newest first. Each list is already oldest-first, so a stable sort on the time keeps ties in order.
+  items.reverse();
+  items.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
   box.replaceChildren();
-  if (!list.length) {
-    box.appendChild(el('p', 'muted', 'No startup changes yet.'));
+  for (const p of problems) box.appendChild(el('p', 'bad-text', p));
+  if (!items.length) {
+    if (!problems.length) box.appendChild(el('p', 'muted', 'No changes yet.'));
     return;
   }
-  for (const c of list.slice().reverse()) {
+  for (const it of items) {
+    const c = it.c;
     const row = el('div', 'chg');
     const what = el('div', 'chg-what');
-    what.appendChild(el('strong', '', c.name));
-    what.appendChild(el('span', 'muted small', ' ' + (c.source || '') + ' - ' + (c.now_enabled ? 'enabled' : 'disabled') + ' at ' + c.at));
-    row.appendChild(what);
     const b = el('button', '', 'Undo');
-    b.title = 'Set it back to ' + (c.was_enabled ? 'enabled' : 'disabled');
-    b.onclick = async () => {
-      b.disabled = true;
-      const r = S.byKey.get('startup|' + c.name.toLowerCase());
-      if (r) {
-        await setStartup(r, c.was_enabled, { silent: true });
-      } else {
-        // Not in the current scan: the source text alone is enough for the core to find it.
-        try {
-          await invoke('set_startup_enabled', { name: c.name, detail: 'source: ' + c.source, enabled: c.was_enabled });
-          showErr('');
-        } catch (e) { showErr('Could not undo ' + c.name + ': ' + e); }
-      }
-      renderStartupChanges();
-    };
+    if (it.src === 'startup') {
+      what.appendChild(el('span', 'chg-kind', 'startup'));
+      what.appendChild(el('strong', '', c.name));
+      what.appendChild(el('span', 'muted small', ' ' + (c.source || '') + ': ' + (c.was_enabled ? 'enabled' : 'disabled') +
+        ' -> ' + (c.now_enabled ? 'enabled' : 'disabled') + ', ' + c.at));
+      b.title = 'Set it back to ' + (c.was_enabled ? 'enabled' : 'disabled');
+      b.onclick = async () => {
+        b.disabled = true;
+        const r = S.byKey.get('startup|' + c.name.toLowerCase());
+        if (r) {
+          await setStartup(r, c.was_enabled, { silent: true });
+        } else {
+          // Not in the current scan: the source text alone is enough for the core to find it.
+          try {
+            await invoke('set_startup_enabled', { name: c.name, detail: 'source: ' + c.source, enabled: c.was_enabled });
+            showErr('');
+          } catch (e) { showErr('Could not undo ' + c.name + ': ' + e); }
+        }
+        renderStartupChanges();
+      };
+    } else {
+      what.appendChild(el('span', 'chg-kind', c.kind === 'task_enabled' ? 'task' : 'service'));
+      what.appendChild(el('strong', '', c.name));
+      what.appendChild(el('span', 'muted small', ' ' + startLabel(c.before) + ' -> ' + startLabel(c.now) + ', ' + c.at));
+      b.title = 'Set it back to ' + startLabel(c.before);
+      b.onclick = async () => {
+        b.disabled = true;
+        await undoAdmin(c);
+        renderStartupChanges();
+      };
+    }
+    row.appendChild(what);
     row.appendChild(b);
     box.appendChild(row);
   }
@@ -529,6 +742,119 @@ async function renderStartupChanges() {
 
 $('startup-btn').onclick = () => { renderStartupChanges(); $('startup-dlg').showModal(); };
 $('startup-close').onclick = () => $('startup-dlg').close();
+
+/* ---------- lasting service / task changes (separate from the toggle) ---------- */
+
+/** After an admin change or undo, keep the task row's enabled state in step. */
+function syncTaskRow(id, enabled) {
+  if (!id || id.indexOf('task:') !== 0) return;
+  const path = id.slice(5);
+  for (const r of S.rows) {
+    if (r.kind === 'task' && r.admin && r.admin.target && norm(r.admin.target) === path) {
+      r.running = enabled;
+      redrawRow(r);
+    }
+  }
+}
+
+async function undoAdmin(c) {
+  try {
+    await invoke('admin_undo', { id: c.id });
+    if (c.kind === 'task_enabled') syncTaskRow(c.id, c.before === 'enabled');
+    showErr('');
+    return true;
+  } catch (e) {
+    showErr('Could not undo the change to ' + c.name + ': ' + e);
+    return false;
+  }
+}
+
+let chgRow = null;
+function chgError(msg) { const e = $('chg-err'); e.hidden = !msg; e.textContent = msg || ''; }
+
+function updateChgWarn() {
+  const r = chgRow;
+  const w = $('chg-warn');
+  let msg = '';
+  const disabling = r.kind === 'service' ? $('chg-choice').value === 'Disabled' : !!r.running;
+  if (disabling && (r.risk === 'caution' || r.risk === 'dangerous')) {
+    msg = r.display + ' is rated ' + cap(r.risk) + '. ' + (r.kind === 'service' ? 'Disabling it' : 'Turning it off') +
+      ' can break Windows or hardware features.' + (r.risk === 'dangerous' ? ' You will be asked to type its name to confirm.' : '');
+  }
+  w.hidden = !msg;
+  w.textContent = msg;
+}
+
+function openChange(r) {
+  if (!r.admin || r.admin.blocked || !r.admin.target) return;
+  chgRow = r;
+  chgError('');
+  const svc = r.kind === 'service';
+  $('chg-title').textContent = svc ? 'Change start type: ' + r.display : (r.running ? 'Disable task: ' : 'Enable task: ') + r.display;
+  $('chg-body').textContent = (svc
+    ? 'This changes how Windows starts the service. '
+    : (r.running ? 'This turns the scheduled task off. ' : 'This turns the scheduled task on. ')) +
+    'It is a lasting change: it stays until you undo it from the Changes list, and it does not depend on the hotkey toggle. ' +
+    'It needs administrator approval (a UAC prompt if the helper is not armed).';
+  $('chg-field').hidden = !svc;
+  if (svc) $('chg-choice').value = 'Manual';
+  $('chg-ok').textContent = svc ? 'Apply' : (r.running ? 'Disable task' : 'Enable task');
+  $('chg-ok').disabled = false;
+  $('chg-ok').classList.toggle('danger', !svc && !!r.running && r.risk === 'dangerous');
+  updateChgWarn();
+  $('chg-dlg').showModal();
+  (svc ? $('chg-choice') : $('chg-cancel')).focus();
+}
+$('chg-choice').onchange = () => { if (chgRow) updateChgWarn(); };
+$('chg-cancel').onclick = () => { chgRow = null; $('chg-dlg').close(); };
+$('chg-dlg').addEventListener('close', () => { chgRow = null; });
+
+$('chg-ok').onclick = async () => {
+  const r = chgRow;
+  if (!r || S.adminBusy) return;
+  const svc = r.kind === 'service';
+  const start = svc ? $('chg-choice').value : null;
+  const disabling = svc ? start === 'Disabled' : !!r.running;
+  if (disabling && r.risk === 'dangerous') {
+    $('chg-dlg').close();
+    const ok = await askTyped({
+      title: 'Dangerous ' + r.kind,
+      text: r.display + ' is rated Dangerous.\n\n' + r.summary + (r.notes ? '\n\n' + r.notes : '') +
+        '\n\nThis is a lasting change and can break Windows or hardware features.',
+      expect: [r.display, r.admin.target], ok: svc ? 'Disable it' : 'Disable task',
+    });
+    if (!ok) return;
+    chgRow = r;
+  }
+  S.adminBusy = true;
+  $('chg-ok').disabled = true;
+  $('chg-ok').textContent = 'Waiting...';
+  let ch = null;
+  try {
+    ch = svc
+      ? await invoke('admin_set_service_start', { name: r.admin.target, start })
+      : await invoke('admin_set_task_enabled', { path: r.admin.target, enabled: !r.running });
+  } catch (e) {
+    S.adminBusy = false;
+    if (!$('chg-dlg').open) { showErr('Could not change ' + r.display + ': ' + e); await refreshHelper(); renderHeader(); return; }
+    $('chg-ok').disabled = false;
+    $('chg-ok').textContent = svc ? 'Apply' : (r.running ? 'Disable task' : 'Enable task');
+    chgError('Could not change it: ' + e);
+    refreshHelper();
+    return;
+  }
+  S.adminBusy = false;
+  chgRow = null;
+  if ($('chg-dlg').open) $('chg-dlg').close();
+  showErr('');
+  await refreshHelper();
+  renderHeader();
+  if (!ch) { toast('Nothing changed: ' + r.display + ' was already set that way.'); return; }
+  if (ch.kind === 'task_enabled') syncTaskRow(ch.id, ch.now === 'enabled');
+  toast(r.display + ': ' + startLabel(ch.before) + ' -> ' + startLabel(ch.now) + '. This lasts until undone.',
+    async () => { await undoAdmin(ch); if ($('startup-dlg').open) renderStartupChanges(); });
+  if ($('startup-dlg').open) renderStartupChanges();
+};
 
 /* ---------- scan / state ---------- */
 
@@ -540,10 +866,11 @@ async function rescan() {
   renderList(false);
   try {
     // Selected processes that are not running still need a row so they can be deselected.
-    const extra = sels().map(s => s.name);
+    const extra = sels().filter(s => selKindOf(s) === 'process').map(s => s.name);
     const rows = await invoke('scan', { extra });
     S.rows = rows;
     S.byKey = new Map(rows.map(r => [key(r), r]));
+    S.selMap = null;
     $('scan-status').textContent = rows.length + ' items';
     showErr('');
   } catch (e) {
@@ -564,6 +891,7 @@ const rowSig = r => JSON.stringify(r, (k, v) => (k.charAt(0) === '_' ? undefined
 
 /** Merge a fresh scan into S.rows, keeping object identity so open closures stay valid. */
 function mergeRows(fresh) {
+  S.selMap = null;
   const seen = new Set();
   const changed = [];
   let structural = false;
@@ -599,12 +927,11 @@ async function silentRefresh() {
   S.scanning = true;
   let fresh = null;
   try {
-    fresh = await invoke('scan', { extra: sels().map(s => s.name) });
+    fresh = await invoke('scan', { extra: sels().filter(s => selKindOf(s) === 'process').map(s => s.name) });
   } catch (_) { /* silent: keep the current view */ }
   S.scanning = false;
   S.lastScanAt = Date.now();
   if (!fresh) return;
-  if ($('startup-dlg').open) renderStartupChanges();
   const { changed, structural } = mergeRows(fresh);
   if (!changed.length && !structural) return;
   const list = $('list');
@@ -627,6 +954,10 @@ async function silentRefresh() {
 let focusTimer = 0;
 function onRegainFocus() {
   clearTimeout(focusTimer);
+  if (S.cfg) {
+    refreshHelper().then(renderHeader);
+    if ($('startup-dlg').open) renderStartupChanges();
+  }
   focusTimer = setTimeout(silentRefresh, 150); // one-shot debounce, not a loop
 }
 window.addEventListener('focus', onRegainFocus);
@@ -638,6 +969,7 @@ async function refreshState() {
   try {
     S.state = await invoke('get_state');
   } catch (e) { showErr('Could not read state: ' + e); }
+  await refreshHelper();
   if (S.cfg) renderHeader();
 }
 
@@ -694,7 +1026,7 @@ $('profile-new').onclick = async () => {
     name = await ask({ title: 'New profile', text: err, input: name.trim(), ok: 'Create' });
   }
   if (name === null) return;
-  const copy = sels().map(s => ({ name: s.name, method: s.method }));
+  const copy = sels().map(s => ({ name: s.name, method: s.method, kind: selKindOf(s) }));
   S.cfg.profiles.push({ name: name.trim(), selections: copy });
   S.cfg.active_profile = name.trim();
   renderList(false);
@@ -868,6 +1200,8 @@ $('rescan').onclick = rescan;
     showErr('Could not read state: ' + e);
   }
   renderTabs();
+  renderHeader();
+  await refreshHelper();
   renderHeader();
   try {
     await T.event.listen('state-changed', refreshState);

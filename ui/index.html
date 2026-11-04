@@ -23,6 +23,16 @@
   <button id="save-btn">Save</button>
   <button id="settings-btn">Settings</button>
 </header>
+<div class="helperbar" id="helperbar">
+  <span class="muted small">Admin helper:</span>
+  <span class="pill off" id="helper-pill">off</span>
+  <span class="spinner" id="helper-spin" hidden role="status" aria-label="Waiting for approval"></span>
+  <button id="helper-arm" title="Approve administrator access now, so turning the toggle ON does not raise a prompt later">Arm admin helper</button>
+  <button id="helper-disarm" hidden>Disarm</button>
+  <span class="small bad-text" id="helper-err" hidden></span>
+</div>
+<div class="banner warn" id="warn-declined" hidden>Admin approval was declined; the toggle only closes processes until you arm the helper.</div>
+<div class="banner warn" id="warn-pending" hidden>Services/tasks are still waiting to be restored; toggle off to retry.</div>
 <div class="banner warn" id="warn-config" hidden></div>
 <div class="banner warn" id="warn-hotkey" hidden></div>
 <div class="banner bad" id="err" hidden></div>
@@ -36,7 +46,7 @@
     <label><input type="checkbox" id="hide-ms" checked> Hide Microsoft tasks</label>
     <hr>
     <button id="rescan" style="width:100%">Rescan</button>
-    <button id="startup-btn" style="width:100%;margin-top:6px" title="Startup items you enabled or disabled, with Undo">Startup changes</button>
+    <button id="startup-btn" style="width:100%;margin-top:6px" title="Startup, service and task changes you made here, with Undo">Changes</button>
     <p class="muted small" id="scan-status"></p>
   </nav>
   <section class="main">
@@ -50,7 +60,8 @@
       </select>
     </div>
     <div class="note" id="kind-note" hidden></div>
-    <div class="line head"><span></span><span>Name</span><span style="text-align:right">RAM</span><span>State</span><span>Risk</span><span>Method</span><span></span></div>
+    <div class="note admin-note" id="admin-note" hidden></div>
+    <div class="line head"><span></span><span>Name</span><span style="text-align:right">RAM</span><span>State</span><span>Risk</span><span>Method</span><span></span><span></span></div>
     <div id="list"></div>
   </section>
 </div>
@@ -62,10 +73,23 @@
 </div>
 
 <dialog id="startup-dlg" class="wide">
-  <h2>Startup changes</h2>
-  <p class="muted small">Changes made here to what starts when you log in. Undo sets the item back; nothing is deleted. These do not involve the RAM toggle or hotkey.</p>
+  <h2>Changes</h2>
+  <p class="muted small">Lasting changes made here: what starts at login, service start types, and scheduled tasks turned on or off. Undo sets the item back; nothing is deleted. These are separate from the RAM toggle and hotkey.</p>
   <div id="startup-list"></div>
   <div class="buttons"><button id="startup-close" class="primary">Done</button></div>
+</dialog>
+
+<dialog id="chg-dlg">
+  <h2 id="chg-title"></h2>
+  <div class="body" id="chg-body"></div>
+  <div class="field" id="chg-field"><label for="chg-choice">Start type</label>
+    <div class="ctl"><select id="chg-choice">
+      <option value="Auto">Automatic</option><option value="AutoDelayed">Automatic (delayed)</option>
+      <option value="Manual">Manual</option><option value="Disabled">Disabled</option>
+    </select></div></div>
+  <div class="warn-text small" id="chg-warn" hidden></div>
+  <div class="small bad-text" id="chg-err" hidden></div>
+  <div class="buttons"><button id="chg-cancel">Cancel</button><button id="chg-ok" class="primary">Apply</button></div>
 </dialog>
 
 <dialog id="dlg"><h2 id="dlg-title"></h2><div class="body" id="dlg-body"></div><div class="buttons" id="dlg-buttons"></div></dialog>

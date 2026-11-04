@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/app"]
+members = ["crates/core", "crates/app", "crates/helper"]
 resolver = "2"
 
 # Vendored copy of muda with the tray menu bottom-aligned (see vendor/muda, Apache-2.0 OR MIT).

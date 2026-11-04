@@ -1,0 +1,12 @@
+[package]
+name = "holdmyram-helper"
+version = "0.1.0"
+edition = "2021"
+description = "Short-lived elevated helper for HoldMyRAM: service and scheduled-task changes only."
+
+[[bin]]
+name = "holdmyram-helper"
+path = "src/main.rs"
+
+[dependencies]
+holdmyram-core = { path = "../core" }

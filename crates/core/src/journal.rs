@@ -7,6 +7,7 @@
 //! a torn one. Entries are kept in apply order; [`Journal::revert_order`] yields them
 //! last-in, first-out.
 
+use crate::admin::proto::StartType;
 use crate::types::Method;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -14,7 +15,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const JOURNAL_VERSION: u32 = 1;
+/// 2: adds `admin` (services and tasks). Version 1 files load unchanged.
+pub const JOURNAL_VERSION: u32 = 2;
 const FILE_NAME: &str = "journal.json";
 
 /// Progress of one touched process.
@@ -58,12 +60,69 @@ pub struct Entry {
     pub note: Option<String>,
 }
 
+/// One service or task touched through the elevated helper. Written (state Planned)
+/// BEFORE the helper is asked to change anything, so a crash or a helper that dies
+/// mid-request still leaves enough to restore.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminEntry {
+    /// Shares the sequence with process entries: revert is LIFO across both.
+    pub seq: u64,
+    pub state: EntryState,
+    #[serde(flatten)]
+    pub op: AdminOp,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AdminOp {
+    /// Temporary stop of a service (start type untouched).
+    ServiceStop {
+        /// Service short name as selected.
+        name: String,
+        /// Was running when recorded (always true today: stopped services are skipped).
+        before_running: bool,
+        /// Start type when recorded; revert leaves the service alone if the user changed it.
+        before_start: StartType,
+        #[serde(default)]
+        before_delayed: Option<bool>,
+        /// Intent: running dependents and the service itself, in the order the helper is
+        /// expected to stop them. Used when the outcome is unknown (state Planned).
+        #[serde(default)]
+        planned: Vec<String>,
+        /// Outcome: exactly what the helper reported it stopped, in stop order. Revert
+        /// starts these in reverse order, and drops each one once it is running again.
+        #[serde(default)]
+        stopped: Vec<String>,
+    },
+    /// Temporary disable of a scheduled task.
+    TaskDisable {
+        /// Full task path (canonical spelling from the scheduler).
+        path: String,
+        before_enabled: bool,
+    },
+}
+
+impl AdminEntry {
+    /// Service name or task path.
+    pub fn target(&self) -> &str {
+        match &self.op {
+            AdminOp::ServiceStop { name, .. } => name,
+            AdminOp::TaskDisable { path, .. } => path,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Journal {
     pub version: u32,
     /// Seconds since the Unix epoch when the journal was first written.
     pub created_unix: u64,
     pub entries: Vec<Entry>,
+    /// Services and tasks. Missing in journals written before they existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admin: Vec<AdminEntry>,
 }
 
 impl Default for Journal {
@@ -78,11 +137,18 @@ impl Journal {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        Self { version: JOURNAL_VERSION, created_unix, entries: Vec::new() }
+        Self { version: JOURNAL_VERSION, created_unix, entries: Vec::new(), admin: Vec::new() }
     }
 
     pub fn next_seq(&self) -> u64 {
-        self.entries.iter().map(|e| e.seq + 1).max().unwrap_or(0)
+        let p = self.entries.iter().map(|e| e.seq + 1).max().unwrap_or(0);
+        let a = self.admin.iter().map(|e| e.seq + 1).max().unwrap_or(0);
+        p.max(a)
+    }
+
+    /// Admin (service/task) entries that may still need undoing.
+    pub fn admin_pending(&self) -> usize {
+        self.admin.iter().filter(|e| e.state != EntryState::Failed).count()
     }
 
     /// Indices of entries in revert order: highest `seq` first (LIFO). Sorting by seq
@@ -95,7 +161,7 @@ impl Journal {
 
     /// True when something may still need undoing.
     pub fn has_pending(&self) -> bool {
-        self.entries.iter().any(|e| e.state != EntryState::Failed)
+        self.entries.iter().any(|e| e.state != EntryState::Failed) || self.admin_pending() > 0
     }
 
     /// Whether an entry for this exact process (pid + creation time) is still pending.
@@ -294,6 +360,84 @@ pub(crate) mod tests {
         j.entries[0].state = EntryState::Planned;
         save(&path, &j).unwrap();
         assert!(pending(&path).unwrap().is_some());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn version_1_journal_still_loads() {
+        // Exactly what the version before services/tasks wrote.
+        let dir = temp_dir("v1");
+        let path = dir.join("journal.json");
+        fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "created_unix": 1793786399,
+  "entries": [
+    {
+      "seq": 0,
+      "pid": 4242,
+      "name": "Discord.exe",
+      "exe": "C:\\Users\\x\\AppData\\Local\\Discord\\app-1.0\\Discord.exe",
+      "command_line": "\"C:\\Users\\x\\AppData\\Local\\Discord\\app-1.0\\Discord.exe\"",
+      "created": 133000000000000000,
+      "method": "close",
+      "state": "done",
+      "relaunch": true,
+      "note": "closed gracefully"
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+        let j = load(&path).unwrap().unwrap();
+        assert_eq!(j.version, 1);
+        assert_eq!(j.entries.len(), 1);
+        assert_eq!(j.entries[0].method, Method::Close);
+        assert!(j.admin.is_empty());
+        assert!(j.has_pending());
+        assert_eq!(j.next_seq(), 1);
+        // Saving it again without admin entries keeps the old shape (no "admin" key).
+        save(&path, &j).unwrap();
+        assert!(!fs::read_to_string(&path).unwrap().contains("\"admin\""));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn admin_entries_round_trip_and_count_as_pending() {
+        let dir = temp_dir("admin");
+        let path = dir.join("journal.json");
+        let mut j = Journal::new();
+        j.entries.push(entry(0, 1, Method::Close));
+        j.entries[0].state = EntryState::Failed;
+        assert!(!j.has_pending());
+        j.admin.push(AdminEntry {
+            seq: 1,
+            state: EntryState::Done,
+            op: AdminOp::ServiceStop {
+                name: "Target".into(),
+                before_running: true,
+                before_start: StartType::Auto,
+                before_delayed: Some(false),
+                planned: vec!["DepA".into(), "Target".into()],
+                stopped: vec!["DepA".into(), "Target".into()],
+            },
+            note: None,
+        });
+        j.admin.push(AdminEntry {
+            seq: 2,
+            state: EntryState::Planned,
+            op: AdminOp::TaskDisable { path: r"\X\Y".into(), before_enabled: true },
+            note: Some("n".into()),
+        });
+        assert!(j.has_pending());
+        assert_eq!(j.admin_pending(), 2);
+        assert_eq!(j.next_seq(), 3);
+        save(&path, &j).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains(r#""kind": "service_stop""#) && text.contains(r#""kind": "task_disable""#), "{text}");
+        assert_eq!(load(&path).unwrap().unwrap(), j);
+        assert_eq!(j.admin[1].target(), r"\X\Y");
         let _ = fs::remove_dir_all(dir);
     }
 

@@ -1,6 +1,7 @@
 //! HoldMyRAM engine. No UI dependencies, so it can be tested on its own.
 
 pub mod actions;
+pub mod admin;
 pub mod config;
 pub mod journal;
 mod plan;

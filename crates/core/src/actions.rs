@@ -89,6 +89,8 @@ impl ProcHandle {
                 PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE
             }
             Method::Suspend => PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SUSPEND_RESUME,
+            // Service/task methods never act on a process handle: query only.
+            Method::Stop | Method::Disable => PROCESS_QUERY_LIMITED_INFORMATION,
         }
     }
 
@@ -422,6 +424,8 @@ pub fn restore(entry: &Entry, self_pid: u32) -> RestoreResult {
                 Err(e) => RestoreResult::new(Failed, e),
             }
         }
+        // Process entries never carry these (toggle journals services and tasks separately).
+        Method::Stop | Method::Disable => RestoreResult::new(Skipped, "not a process action"),
     }
 }
 
