@@ -1,0 +1,346 @@
+# HoldMyRAM seed risk database.
+# Seeded from a RAM audit of an ASUS ROG Zephyrus G14 (Windows 11).
+# Tiers: suggested / caution / dangerous / unrated. When unsure, rate more cautiously.
+# kind: process | service | startup | task | app. Names match case-insensitively.
+# Users can override anything in %APPDATA%\HoldMyRAM\risk-user.toml.
+
+# ---------------------------------------------------------------- Processes: user apps
+
+[[entry]]
+name = "chrome.exe"
+kind = "process"
+risk = "caution"
+summary = "Google Chrome. Often the biggest RAM user, but closing it loses unsaved form data and any tabs not restored on next launch."
+notes = "Chrome usually offers to restore tabs after a normal close. A force kill may lose them."
+
+[[entry]]
+name = "claude.exe"
+kind = "process"
+risk = "caution"
+summary = "Claude desktop app (or the Claude Code CLI). Closing it ends any running conversation or agent session."
+notes = "If you are running Claude Code from a terminal, stopping it ends that session."
+
+[[entry]]
+name = "Discord.exe"
+kind = "process"
+risk = "suggested"
+summary = "Discord chat client. Safe to close, but you will leave any voice call and stop getting messages until it is reopened."
+
+[[entry]]
+name = "steam.exe"
+kind = "process"
+risk = "caution"
+summary = "Steam client. Closing it stops downloads and can close games that rely on Steam running."
+
+[[entry]]
+name = "steamwebhelper.exe"
+kind = "process"
+risk = "caution"
+summary = "Chromium-based helper that draws the Steam interface. Stopping it blanks the Steam window and may disturb in-game overlays."
+
+[[entry]]
+name = "parsecd.exe"
+kind = "process"
+risk = "caution"
+summary = "Parsec remote desktop. Closing it ends any active session and, if this PC is a host, you lose remote access until it is started again."
+notes = "Dangerous if you are connected remotely and cannot reach the PC physically."
+
+[[entry]]
+name = "msedgewebview2.exe"
+kind = "process"
+risk = "dangerous"
+summary = "Microsoft Edge WebView2 runtime. Many apps (including parts of Windows and Microsoft 365) draw their interface with it, so stopping it can blank or crash them."
+
+[[entry]]
+name = "XboxPcApp.exe"
+kind = "process"
+risk = "caution"
+summary = "Xbox app. Closing it is usually harmless, but it stops downloads and game launches started from it."
+
+[[entry]]
+name = "XboxPcAppFT.exe"
+kind = "process"
+risk = "caution"
+summary = "Companion process of the Xbox app."
+notes = "Exact role not verified; rated Caution until confirmed."
+
+[[entry]]
+name = "CrossDeviceResume.exe"
+kind = "process"
+risk = "suggested"
+summary = "Windows feature that lets you resume activity started on a linked phone. Stopping it only disables that resume prompt."
+notes = "Role inferred from the name and Windows cross-device features; not fully verified."
+
+[[entry]]
+name = "ArmouryCrateKeyControl.exe"
+kind = "process"
+risk = "caution"
+summary = "ASUS Armoury Crate helper that handles the special keys (such as the ROG key). Stopping it can leave those keys doing nothing."
+
+[[entry]]
+name = "AsusSoftwareManagerAgent.exe"
+kind = "process"
+risk = "caution"
+summary = "Agent for ASUS Software Manager, which handles ASUS app and driver updates. Stopping it should only pause that, but ASUS utilities may depend on it."
+notes = "Exact dependencies not verified."
+
+[[entry]]
+name = "GHelper.exe"
+kind = "process"
+risk = "dangerous"
+summary = "G-Helper, a replacement for Armoury Crate. If you rely on it for fan curves, performance mode, GPU mode or the keyboard shortcuts, closing it undoes those settings and keys."
+
+[[entry]]
+name = "RadeonSoftware.exe"
+kind = "process"
+risk = "caution"
+summary = "AMD Software (Adrenalin) interface. Closing the window is usually harmless, but overlay and recording features may stop."
+
+[[entry]]
+name = "AMDRSServ.exe"
+kind = "process"
+risk = "caution"
+summary = "AMD Radeon Software background server for the overlay, recording and hotkeys. Stopping it disables those until restart."
+
+[[entry]]
+name = "nvcontainer.exe"
+kind = "process"
+risk = "dangerous"
+summary = "NVIDIA Container, which hosts NVIDIA driver features and services. Stopping it can break NVIDIA settings, overlays and GPU features."
+
+[[entry]]
+name = "NVDisplay.Container.exe"
+kind = "process"
+risk = "dangerous"
+summary = "NVIDIA Display Container, part of the display driver stack. Stopping it can break the NVIDIA control panel and display or GPU switching behaviour."
+
+[[entry]]
+name = "tailscale-ipn.exe"
+kind = "process"
+risk = "caution"
+summary = "Tailscale tray interface. Closing it removes the tray control; the connection itself is held by the Tailscale service."
+
+[[entry]]
+name = "tailscaled.exe"
+kind = "process"
+risk = "caution"
+summary = "Tailscale background service process. Stopping it drops the VPN connection and any remote access that depends on it."
+notes = "Dangerous if you reach this PC remotely over Tailscale."
+
+[[entry]]
+name = "Spotify.exe"
+kind = "process"
+risk = "suggested"
+summary = "Spotify music player. Safe to close; playback stops."
+
+[[entry]]
+name = "OneDrive.exe"
+kind = "process"
+risk = "caution"
+summary = "OneDrive sync client. Closing it pauses file syncing; changes made meanwhile sync when it runs again."
+
+[[entry]]
+name = "HoldMySession.exe"
+kind = "process"
+risk = "caution"
+summary = "A personal tool of the user. Closing it ends whatever it is holding open."
+notes = "Rated cautiously because its function depends on the user's own setup."
+
+[[entry]]
+name = "pwsh.exe"
+kind = "process"
+risk = "caution"
+summary = "PowerShell 7. It may be running a script, a terminal tab or a tool such as Claude Code; closing it ends that work."
+
+# ---------------------------------------------------------------- Processes: Windows core
+
+[[entry]]
+name = "MsMpEng.exe"
+kind = "process"
+risk = "dangerous"
+summary = "Microsoft Defender antimalware engine. Stopping it removes real-time protection and is blocked by Windows tamper protection anyway."
+
+[[entry]]
+name = "svchost.exe"
+kind = "process"
+risk = "dangerous"
+summary = "Generic host that runs many Windows services at once. Killing one can take down networking, audio, updates or the whole session."
+
+[[entry]]
+name = "explorer.exe"
+kind = "process"
+risk = "dangerous"
+summary = "Windows shell: desktop, taskbar, Start menu and File Explorer windows. Stopping it makes the desktop disappear until it restarts."
+
+[[entry]]
+name = "dwm.exe"
+kind = "process"
+risk = "dangerous"
+summary = "Desktop Window Manager, which composes everything you see on screen. Stopping it blanks or flickers the display."
+
+[[entry]]
+name = "csrss.exe"
+kind = "process"
+risk = "dangerous"
+summary = "Client/Server Runtime Subsystem, a core Windows process. Terminating it crashes Windows with a blue screen."
+
+[[entry]]
+name = "lsass.exe"
+kind = "process"
+risk = "dangerous"
+summary = "Local Security Authority, which handles logons and security policy. Terminating it forces Windows to shut down."
+
+[[entry]]
+name = "winlogon.exe"
+kind = "process"
+risk = "dangerous"
+summary = "Windows logon manager, which handles sign-in, sign-out and the secure attention sequence. Terminating it crashes the session."
+
+# ---------------------------------------------------------------- Services: Windows
+
+[[entry]]
+name = "SysMain"
+kind = "service"
+risk = "suggested"
+summary = "Superfetch: preloads frequently used apps into RAM. Mainly helps hard drives, so it is usually safe to disable on an SSD."
+
+[[entry]]
+name = "WSearch"
+kind = "service"
+risk = "caution"
+summary = "Windows Search indexer. Disabling it saves RAM and disk activity but makes Start, Explorer and Outlook searches slower or incomplete."
+
+[[entry]]
+name = "DiagTrack"
+kind = "service"
+risk = "suggested"
+summary = "Connected User Experiences and Telemetry. Sends diagnostic data to Microsoft; disabling it does not affect normal use."
+
+[[entry]]
+name = "CDPUserSvc"
+kind = "service"
+risk = "suggested"
+summary = "Connected Devices Platform user service, used for Nearby Sharing and cross-device features. Disabling it turns those off."
+notes = "Windows adds a random suffix to the per-user instance name (CDPUserSvc_xxxxx), so match by prefix."
+
+[[entry]]
+name = "PimIndexMaintenanceSvc"
+kind = "service"
+risk = "suggested"
+summary = "Indexes contact data for search. Disabling it may make contact search in Mail and People slower."
+notes = "Per-user service; instance name carries a random suffix."
+
+[[entry]]
+name = "UnistoreSvc"
+kind = "service"
+risk = "suggested"
+summary = "User Data Storage: holds structured data such as contacts, calendar and messaging for apps. Disabling it can break Mail, Calendar and People."
+notes = "Per-user service; instance name carries a random suffix."
+
+[[entry]]
+name = "UserDataSvc"
+kind = "service"
+risk = "suggested"
+summary = "User Data Access: gives apps access to contacts, calendar and messaging data. Disabling it can break Mail, Calendar and People."
+notes = "Per-user service; instance name carries a random suffix."
+
+[[entry]]
+name = "PhoneSvc"
+kind = "service"
+risk = "suggested"
+summary = "Phone Service: manages telephony state on the device. Safe on a PC without a modem, but disabling it breaks Phone Link calling features."
+
+[[entry]]
+name = "WinDefend"
+kind = "service"
+risk = "dangerous"
+summary = "Microsoft Defender Antivirus service. Disabling it removes real-time malware protection."
+
+# ---------------------------------------------------------------- Services: ASUS
+
+[[entry]]
+name = "AsusOptimization"
+kind = "service"
+risk = "dangerous"
+summary = "ASUS Optimization service, which handles hardware hotkeys and performance profiles. G-Helper's hotkeys need it, so stopping it can break fan and key control."
+notes = "Appears as both AsusOptimization and ASUSOptimization depending on the installer; matching is case-insensitive."
+
+[[entry]]
+name = "ArmouryCrateControlInterface"
+kind = "service"
+risk = "caution"
+summary = "Armoury Crate control interface, the service behind the Armoury Crate app. Stopping it disables that app's controls and some ASUS features."
+
+[[entry]]
+name = "AsusAppService"
+kind = "service"
+risk = "caution"
+summary = "ASUS app service supporting the MyASUS and Armoury Crate apps. Stopping it may disable features in those apps."
+notes = "Exact dependencies not verified."
+
+[[entry]]
+name = "ASUSSoftwareManager"
+kind = "service"
+risk = "caution"
+summary = "ASUS Software Manager service, which handles ASUS app and driver updates. Stopping it pauses updates and may affect other ASUS apps."
+notes = "Exact dependencies not verified."
+
+[[entry]]
+name = "ASUSSwitch"
+kind = "service"
+risk = "caution"
+summary = "ASUS service believed to handle hardware mode switching. Stopping it could affect hardware features."
+notes = "Role not verified; rated Caution until confirmed."
+
+[[entry]]
+name = "ASUSSystemAnalysis"
+kind = "service"
+risk = "caution"
+summary = "ASUS system analysis service, used for diagnostics and hardware monitoring by ASUS apps. Stopping it may disable those readouts."
+notes = "Role not verified; rated Caution until confirmed."
+
+[[entry]]
+name = "ASUSSystemDiagnosis"
+kind = "service"
+risk = "caution"
+summary = "ASUS system diagnosis service, used by MyASUS for hardware checks. Stopping it may disable those checks."
+notes = "Role not verified; rated Caution until confirmed."
+
+[[entry]]
+name = "AsusPTPService"
+kind = "service"
+risk = "dangerous"
+summary = "ASUS Precision Touchpad service. Stopping it can disable touchpad gestures or the touchpad entirely."
+
+# ---------------------------------------------------------------- Services: third party
+
+[[entry]]
+name = "CodexSandboxService.OpenAI.Codex"
+kind = "service"
+risk = "caution"
+summary = "Sandbox service for the OpenAI Codex app. It is locked down, so even administrators cannot change it, and stopping it breaks Codex sandboxing."
+
+[[entry]]
+name = "CoworkVMService"
+kind = "service"
+risk = "caution"
+summary = "Virtual machine service for Claude's Cowork feature. It is locked down, so even administrators cannot change it, and stopping it breaks Cowork."
+
+[[entry]]
+name = "Parsec"
+kind = "service"
+risk = "caution"
+summary = "Parsec background service. Stopping it breaks remote sessions, including at the sign-in screen and UAC prompts."
+
+[[entry]]
+name = "Tailscale"
+kind = "service"
+risk = "caution"
+summary = "Tailscale VPN service. Stopping it drops the VPN connection and any remote access that relies on it."
+notes = "Dangerous if you reach this PC remotely over Tailscale."
+
+[[entry]]
+name = "NvContainerLocalSystem"
+kind = "service"
+risk = "dangerous"
+summary = "NVIDIA LocalSystem Container, which runs NVIDIA driver features. Stopping it can break GPU settings, overlays and related functions."

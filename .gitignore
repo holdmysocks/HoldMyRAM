@@ -1,0 +1,25 @@
+# Agent and design docs (local only)
+CLAUDE.md
+AGENTS.md
+.claude/
+docs/
+
+# Rust / Tauri
+/target/
+**/target/
+**/*.rs.bk
+crates/app/gen/
+
+# Node
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local config and logs
+*.log
+.env

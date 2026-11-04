@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/core", "crates/app"]
+resolver = "2"
+
+# Vendored copy of muda with the tray menu bottom-aligned (see vendor/muda, Apache-2.0 OR MIT).
+[patch.crates-io]
+muda = { path = "vendor/muda" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

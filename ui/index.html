@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HoldMyRAM</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>HoldMyRAM</h1>
+  <span class="pill off" id="state-pill">OFF</span>
+  <button id="toggle-btn" class="primary">Turn on</button>
+  <span class="muted small" id="sel-summary"></span>
+  <span class="spacer"></span>
+  <span class="profile-box">
+    <label class="muted small" for="profile-sel">Profile</label>
+    <select id="profile-sel"></select>
+    <button id="profile-new" title="New profile (copies the current selection)">New</button>
+    <button id="profile-rename">Rename</button>
+    <button id="profile-delete" class="danger">Delete</button>
+  </span>
+  <button id="save-btn">Save</button>
+  <button id="settings-btn">Settings</button>
+</header>
+<div class="banner warn" id="warn-config" hidden></div>
+<div class="banner warn" id="warn-hotkey" hidden></div>
+<div class="banner bad" id="err" hidden></div>
+<div class="banner info" id="last-report" hidden></div>
+
+<div class="layout">
+  <nav>
+    <div id="tabs"></div>
+    <hr>
+    <label><input type="checkbox" id="only-selected"> Selected only</label>
+    <label><input type="checkbox" id="hide-ms" checked> Hide Microsoft tasks</label>
+    <hr>
+    <button id="rescan" style="width:100%">Rescan</button>
+    <button id="startup-btn" style="width:100%;margin-top:6px" title="Startup items you enabled or disabled, with Undo">Startup changes</button>
+    <p class="muted small" id="scan-status"></p>
+  </nav>
+  <section class="main">
+    <div class="toolbar">
+      <input type="search" id="search" placeholder="Search name, publisher, path..." autocomplete="off">
+      <label class="muted small" for="sort">Sort</label>
+      <select id="sort">
+        <option value="ram">RAM (largest first)</option>
+        <option value="risk">Risk (safest first)</option>
+        <option value="name">Name</option>
+      </select>
+    </div>
+    <div class="note" id="kind-note" hidden></div>
+    <div class="line head"><span></span><span>Name</span><span style="text-align:right">RAM</span><span>State</span><span>Risk</span><span>Method</span><span></span></div>
+    <div id="list"></div>
+  </section>
+</div>
+
+<div class="toast" id="toast" role="status" hidden>
+  <span id="toast-text"></span>
+  <button id="toast-undo" class="linkbtn">Undo</button>
+  <button id="toast-close" class="linkbtn" aria-label="Dismiss">&times;</button>
+</div>
+
+<dialog id="startup-dlg" class="wide">
+  <h2>Startup changes</h2>
+  <p class="muted small">Changes made here to what starts when you log in. Undo sets the item back; nothing is deleted. These do not involve the RAM toggle or hotkey.</p>
+  <div id="startup-list"></div>
+  <div class="buttons"><button id="startup-close" class="primary">Done</button></div>
+</dialog>
+
+<dialog id="dlg"><h2 id="dlg-title"></h2><div class="body" id="dlg-body"></div><div class="buttons" id="dlg-buttons"></div></dialog>
+
+<dialog id="settings" class="wide">
+  <h2>Settings</h2>
+  <div class="field"><label for="set-hotkey">Hotkey</label>
+    <div class="ctl"><input type="text" id="set-hotkey" spellcheck="false" placeholder="Ctrl+Alt+R">
+      <button id="set-record">Record</button></div></div>
+  <div class="status-line" id="hotkey-status"></div>
+  <div class="field"><label for="set-theme">Theme</label>
+    <div class="ctl"><select id="set-theme">
+      <option value="dark">Dark</option><option value="light">Light</option><option value="system">Follow Windows</option>
+    </select></div></div>
+  <div class="field"><label for="set-grace">Grace seconds</label>
+    <div class="ctl"><input type="number" id="set-grace" min="0" max="300" step="1">
+      <span class="muted small">Wait after asking an app to close, before forcing it (Close method).</span></div></div>
+  <div class="field"><label for="set-path">Config file</label>
+    <div class="ctl"><input type="text" id="set-path" spellcheck="false">
+      <button id="set-export">Export</button><button id="set-import">Import</button></div></div>
+  <div class="status-line muted" id="set-msg"></div>
+  <p class="muted small" id="set-info"></p>
+  <p class="muted small">Changes apply to the hotkey and the toggle after you press Save. Import loads a file as unsaved changes.</p>
+  <div class="buttons" style="display:flex;gap:8px;justify-content:space-between">
+    <button id="quit-btn" class="danger">Quit HoldMyRAM</button>
+    <button id="settings-close" class="primary">Done</button>
+  </div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
