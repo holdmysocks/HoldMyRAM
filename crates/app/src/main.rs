@@ -25,6 +25,10 @@ const ICON_ON: &[u8] = include_bytes!("../icons/32x32-on.png");
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 /// A toggle is running on its worker thread; further presses are ignored until it ends.
 static BUSY: AtomicBool = AtomicBool::new(false);
+/// A quit is already in progress (waiting for a toggle and/or restoring).
+static QUITTING: AtomicBool = AtomicBool::new(false);
+/// How long a quit waits for a running toggle (Close grace period + restore) to finish.
+const QUIT_WAIT: Duration = Duration::from_secs(120);
 
 /// Settings and status shared between the tray, the hotkey and the window.
 struct Runtime {
@@ -264,7 +268,47 @@ fn toggle_now(app: AppHandle) {
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
-    app.exit(0);
+    quit_restoring(&app);
+}
+
+/// Quit without leaving apps closed: wait for any running toggle, restore if the toggle is
+/// on, then exit. Holds BUSY the whole time so the hotkey cannot start a new toggle.
+fn quit_restoring(app: &AppHandle) {
+    if QUITTING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    set_tray(app, ACTIVE.load(Ordering::SeqCst), "HoldMyRAM: quitting...");
+    let worker_app = app.clone();
+    let spawned = std::thread::Builder::new().name("quit".into()).spawn(move || {
+        let started = std::time::Instant::now();
+        let mut got_lock = false;
+        while started.elapsed() < QUIT_WAIT {
+            if !BUSY.swap(true, Ordering::SeqCst) {
+                got_lock = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if !got_lock {
+            // A toggle is stuck. Don't hang forever; the journal still lets the next launch restore.
+            debug_log("quit: timed out waiting for the running toggle; exiting without restore");
+        } else if ACTIVE.load(Ordering::SeqCst) {
+            let report = engine::revert();
+            debug_log(&format!("quit: {}", report.details()));
+            if !report.failed.is_empty() {
+                debug_log(&format!(
+                    "quit: {} item(s) could not be restored; they stay in the journal for the next launch",
+                    report.failed.len()
+                ));
+            }
+            ACTIVE.store(false, Ordering::SeqCst);
+        }
+        worker_app.exit(0);
+    });
+    if let Err(e) = spawned {
+        debug_log(&format!("quit: could not start worker ({e}); exiting without restore"));
+        app.exit(0);
+    }
 }
 
 /// Create the window only when asked. Closing it destroys the webview, which is what
@@ -400,7 +444,7 @@ fn main() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => open_window(app),
                     "toggle" => toggle(app),
-                    "quit" => app.exit(0),
+                    "quit" => quit_restoring(app),
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {

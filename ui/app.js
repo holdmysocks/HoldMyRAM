@@ -832,9 +832,9 @@ $('quit-btn').onclick = async () => {
   const ok = await ask({
     title: 'Quit HoldMyRAM',
     text: st && st.active
-      ? 'The free-RAM set is ON. Quitting leaves those apps closed; the next launch offers to restore them. Quit anyway?'
+      ? 'The free-RAM set is ON. HoldMyRAM will restore the apps it closed, then quit. This can take a few seconds.'
       : 'Quit HoldMyRAM and remove it from the tray?',
-    ok: 'Quit', danger: true,
+    ok: 'Quit', danger: !(st && st.active),
   });
   if (ok) invoke('quit_app');
 };
