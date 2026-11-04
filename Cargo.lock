@@ -1242,7 +1242,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "holdmyram"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "holdmyram-core",
  "serde",
@@ -1257,7 +1257,7 @@ dependencies = [
 
 [[package]]
 name = "holdmyram-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crc32fast",
  "miniz_oxide 0.8.9",
@@ -1269,7 +1269,7 @@ dependencies = [
 
 [[package]]
 name = "holdmyram-helper"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "holdmyram-core",
 ]

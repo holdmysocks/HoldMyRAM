@@ -5,7 +5,7 @@ startup items, scheduled tasks and services it may close, see a risk rating and
 a short explanation for each, and toggle the set with a global hotkey. Toggling
 off restores what was closed.
 
-Status: early (v0.1.0). Unsigned and not an installer. Free software under the
+Status: early (v0.1.1). Unsigned and not an installer. Free software under the
 GNU General Public License, version 3 (see `LICENSE`), with no warranty.
 
 ## Requirements
