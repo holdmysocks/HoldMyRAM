@@ -226,8 +226,8 @@ name = "steamwebhelper.exe"
 display = "Steam web helper"
 group = "optional"
 confidence = "medium"
-why = "Chromium helper that draws the Steam interface; often several hundred MB."
-side_effect = "The Steam window goes blank and the in-game overlay may stop working."
+why = "Chromium helper that draws the Steam interface; often several hundred MB. Steam restarts it itself."
+side_effect = "Steam restarts it within seconds and may bring its window back, so this frees no lasting RAM. Close Steam itself to free that memory."
 
 [[item]]
 kind = "process"

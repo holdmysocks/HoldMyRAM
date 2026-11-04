@@ -36,7 +36,7 @@ summary = "Steam client. Closing it stops downloads and can close games that rel
 name = "steamwebhelper.exe"
 kind = "process"
 risk = "caution"
-summary = "Chromium-based helper that draws the Steam interface. Stopping it blanks the Steam window and may disturb in-game overlays."
+summary = "Chromium-based helper that draws the Steam interface. Steam restarts it within seconds if you stop it (and may bring its window back), so stopping it frees no lasting RAM. To free that memory, close Steam itself."
 
 [[entry]]
 name = "parsecd.exe"
