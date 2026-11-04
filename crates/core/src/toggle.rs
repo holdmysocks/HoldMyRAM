@@ -247,7 +247,7 @@ pub fn has_admin_items(selections: &[Selection]) -> bool {
 
 /// The foreground PID that actually deserves protection: none when the shell or
 /// HoldMyRAM itself has focus.
-fn effective_foreground(procs: &[ProcInfo], fg: Option<u32>, self_pid: u32) -> Option<u32> {
+pub(crate) fn effective_foreground(procs: &[ProcInfo], fg: Option<u32>, self_pid: u32) -> Option<u32> {
     let fg = fg?;
     if fg == self_pid {
         return None;

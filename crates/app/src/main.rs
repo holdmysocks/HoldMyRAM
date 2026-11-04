@@ -1,5 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod profile_cmds;
+mod system_cmds;
+mod update_cmds;
+
 use holdmyram_core::admin::changelog::{AdminChange, ChangeLog};
 use holdmyram_core::admin::client::Helper;
 use holdmyram_core::admin::handler::AdminBackend;
@@ -430,7 +434,7 @@ fn apply_hotkey(app: &AppHandle, requested: &str) {
 }
 
 #[derive(Serialize)]
-struct StateView {
+pub(crate) struct StateView {
     config: Config,
     warning: Option<String>,
     active: bool,
@@ -439,6 +443,10 @@ struct StateView {
     last_report: Option<engine::Report>,
     config_path: String,
     app_dir: String,
+    /// The first-run tutorial was shown or skipped (same as `config.tutorial_seen`).
+    tutorial_seen: bool,
+    /// Built-in and user profiles, built-ins first (see `profile_cmds::ProfileInfo`).
+    profiles: Vec<profile_cmds::ProfileInfo>,
 }
 
 fn state_view() -> StateView {
@@ -452,7 +460,21 @@ fn state_view() -> StateView {
         last_report: r.last_detail.clone(),
         config_path: config::config_path().display().to_string(),
         app_dir: config::app_dir().display().to_string(),
+        tutorial_seen: r.config.tutorial_seen,
+        profiles: profile_cmds::profile_infos(&r.config),
     }
+}
+
+/// Save `config` and make it the running one (hotkey unchanged). For commands that change
+/// the saved config directly (import, duplicate, tutorial flag).
+fn adopt_saved_config(config: Config) -> Result<StateView, String> {
+    config.save().map_err(|e| e.to_string())?;
+    {
+        let mut r = rt();
+        r.config = config;
+        r.warning = None;
+    }
+    Ok(state_view())
 }
 
 #[tauri::command]
@@ -678,20 +700,45 @@ fn quit_restoring(app: &AppHandle) {
     }
 }
 
+/// Bring the window to the front. A window opened from the tray can land behind other
+/// apps, because Windows only lets the current foreground app take focus. Toggling
+/// always-on-top lifts it above the other windows (then drops it back to normal) and
+/// `set_focus` asks for keyboard focus.
+fn raise(w: &tauri::WebviewWindow) {
+    let _ = w.unminimize();
+    let _ = w.show();
+    let _ = w.set_always_on_top(true);
+    let _ = w.set_focus();
+    let _ = w.set_always_on_top(false);
+}
+
 /// Create the window only when asked. Closing it destroys the webview, which is what
 /// keeps the background footprint small.
 fn open_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(WINDOW_LABEL) {
-        let _ = w.unminimize();
-        let _ = w.set_focus();
+        raise(&w);
         return;
     }
     let built = WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::App("index.html".into()))
         .title("HoldMyRAM")
         .inner_size(1040.0, 700.0)
         .build();
-    if built.is_ok() {
-        WINDOW_OPEN.store(true, Ordering::SeqCst);
+    match built {
+        Ok(w) => {
+            WINDOW_OPEN.store(true, Ordering::SeqCst);
+            raise(&w);
+            // The window may not be fully shown yet; raise once more a moment later.
+            // One short-lived thread, it ends right after.
+            let again = app.clone();
+            let _ = std::thread::Builder::new().name("raise".into()).spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                if let Some(w) = again.get_webview_window(WINDOW_LABEL) {
+                    raise(&w);
+                }
+            });
+        }
+        // Never silently: most likely the WebView2 runtime is missing on this PC.
+        Err(e) => system_cmds::window_failed(app, &e.to_string()),
     }
 }
 
@@ -734,12 +781,9 @@ fn toggle(app: &AppHandle) {
     // Capture the foreground app at the moment of the key press, before anything changes.
     let fg = if turning_on { foreground_pid() } else { None };
     let self_pid = std::process::id();
-    let (selections, grace) = {
+    let (cfg, grace) = {
         let r = rt();
-        (
-            r.config.effective_selections().to_vec(),
-            Duration::from_secs(r.config.grace_seconds),
-        )
+        (r.config.clone(), Duration::from_secs(r.config.grace_seconds))
     };
     set_tray(app, turning_on, if turning_on { "HoldMyRAM: turning on..." } else { "HoldMyRAM: restoring..." });
     let _ = app.emit("state-changed", ());
@@ -750,6 +794,9 @@ fn toggle(app: &AppHandle) {
         // disarm check never sees the helper's journal entries with a stale ACTIVE.
         let mut guard: Option<MutexGuard<'static, Option<Helper>>> = None;
         let report = if turning_on {
+            // Built-in profiles are resolved here, through the same path as the preview;
+            // user profiles return their fixed selections unchanged.
+            let selections = profile_cmds::toggle_selections(&cfg, fg, self_pid);
             let opts = engine::Options { grace, ..Default::default() };
             apply_locked(&worker_app, &opts, &selections, fg, self_pid, &mut guard)
         } else {
@@ -923,7 +970,10 @@ fn debug_log(msg: &str) {
 }
 
 fn main() {
+    // Self-update bookkeeping (wait for the previous version to exit, remove leftovers).
+    update_cmds::early_startup();
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -937,7 +987,14 @@ fn main() {
             get_state, save_config, scan, export_config, import_config, toggle_now, quit_app,
             set_startup_enabled, startup_changes,
             helper_status, arm_helper, disarm_helper, admin_set_service_start, admin_set_task_enabled,
-            admin_changes, admin_undo
+            admin_changes, admin_undo,
+            profile_cmds::list_profiles, profile_cmds::preview_profile, profile_cmds::duplicate_profile,
+            profile_cmds::export_profile, profile_cmds::import_profile,
+            profile_cmds::pick_save_path, profile_cmds::pick_open_path,
+            system_cmds::get_autostart, system_cmds::set_autostart, system_cmds::set_tutorial_seen,
+            system_cmds::webview2_status,
+            update_cmds::update_status, update_cmds::check_for_update, update_cmds::download_update,
+            update_cmds::install_update, update_cmds::open_release_page
         ])
         .setup(|app| {
             let open = MenuItem::with_id(app, "open", "Open HoldMyRAM", true, None::<&str>)?;
@@ -981,6 +1038,7 @@ fn main() {
                 r.warning = loaded.warning;
             }
             apply_hotkey(app.handle(), &hotkey);
+            update_cmds::on_setup(app.handle());
             Ok(())
         })
         .build(tauri::generate_context!())

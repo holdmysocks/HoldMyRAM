@@ -98,6 +98,25 @@ impl From<RawSelection> for Selection {
     }
 }
 
+/// An optional ("add-on") item of the built-in Recommended profiles that the user turned
+/// on. `name` is the item's name exactly as written in data/recommended.toml.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AddonRef {
+    #[serde(default)]
+    pub kind: SelectionKind,
+    pub name: String,
+}
+
+impl AddonRef {
+    pub fn new(kind: SelectionKind, name: impl Into<String>) -> AddonRef {
+        AddonRef { kind, name: name.into() }
+    }
+
+    pub fn matches(&self, kind: SelectionKind, name: &str) -> bool {
+        self.kind == kind && self.name.trim().eq_ignore_ascii_case(name.trim())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

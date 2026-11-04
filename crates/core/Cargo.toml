@@ -7,11 +7,15 @@ edition = "2021"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
+# ZIP reading for the updater; both are already in the dependency tree (png, flate2).
+miniz_oxide = "0.8"
+crc32fast = "1"
 
 [dependencies.windows]
 version = "0.61"
 features = [
     "Win32_Foundation",
+    "Win32_Networking_WinHttp",
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_Security_Cryptography",

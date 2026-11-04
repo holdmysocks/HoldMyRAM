@@ -57,10 +57,14 @@ pub const NEVER_TOUCH_SERVICES: &[&str] = &[
     "vgc",
     "vgtray",
     "BEService",
+    // BattlEye's kernel driver service. Drivers are refused by type anyway; named here so
+    // the block does not depend on the type bits being readable.
+    "BEDaisy",
     "EasyAntiCheat",
     "EasyAntiCheat_EOS",
     "EAAntiCheat.GameService",
     "FACEITService",
+    "FACEITClient",
     // Hardware vendor services this machine depends on.
     "NvContainerLocalSystem",
     "AsusOptimization",
@@ -209,7 +213,7 @@ mod tests {
             validate_task_path(&format!("{f}X")).unwrap();
         }
         // Spot-check the lists contain what the design requires.
-        for s in ["RpcSs", "WinDefend", "vgc", "EAAntiCheat.GameService", "ASUSSystemDiagnosis", "Schedule", "TrustedInstaller"] {
+        for s in ["RpcSs", "WinDefend", "vgc", "EAAntiCheat.GameService", "ASUSSystemDiagnosis", "Schedule", "TrustedInstaller", "BEDaisy", "FACEITClient"] {
             assert!(NEVER_TOUCH_SERVICES.contains(&s), "{s}");
         }
     }
@@ -224,6 +228,9 @@ mod tests {
         assert_eq!(never_touch_service("eaanticheat.gameservice"), Some("EAAntiCheat.GameService"));
         assert_eq!(never_touch_service("easyanticheat_eos"), Some("EasyAntiCheat_EOS"));
         assert_eq!(never_touch_service("wdnissvc"), Some("WdNisSvc"));
+        assert_eq!(never_touch_service("bedaisy"), Some("BEDaisy"));
+        assert_eq!(never_touch_service("BEDAISY"), Some("BEDaisy"));
+        assert_eq!(never_touch_service("FaceitClient"), Some("FACEITClient"));
     }
 
     #[test]

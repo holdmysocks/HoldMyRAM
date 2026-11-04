@@ -1,0 +1,842 @@
+# HoldMyRAM built-in "Recommended" profiles: the generic rule list.
+#
+# This file is embedded in the binary (include_str!) and is NOT a fixed selection list.
+# At apply time (and for the preview) HoldMyRAM takes these rules, keeps only what is
+# actually running / present / enabled on this PC, and then drops anything that fails a
+# safety check: the foreground app's process tree, HoldMyRAM itself, protected process
+# names, protected directories (C:\Windows\...), the helper's never-touch services and task
+# folders, and anything the risk database (data/risk.toml + the user's risk-user.toml)
+# rates Dangerous.
+#
+# Profiles:
+#   "Recommended"  uses the kind = "process" items only (never needs admin / UAC).
+#   "Recommended+" uses every kind (services and tasks go through the admin helper).
+#
+# Default vs add-on:
+#   An item is in the built-in profiles BY DEFAULT only when its group is not an add-on
+#   group AND its confidence is not "low". Add-on groups:
+#     "optional"  user-facing apps (Discord, Spotify, Steam, ...)
+#     "optin"     everything else that is safe for some people but not for everyone
+#   Add-ons are used only when the user turns them on (config `recommended_addons` for
+#   single items, `recommended_addon_groups` for whole groups).
+#
+# Format (one [[item]] table per rule; unknown keys are rejected by a test):
+#   kind        = "process" | "service" | "task"
+#   name        = process: executable name ("GameBar.exe"), matched case-insensitively.
+#                 service: short (key) name ("DiagTrack"). Per-user services are listed by
+#                          their template name ("CDPUserSvc") and also match the running
+#                          instance ("CDPUserSvc_8155c").
+#                 task:    full task path ("\Microsoft\Windows\Maps\MapsUpdateTask").
+#                          A single trailing "*" makes it a prefix match within the last
+#                          path component (for tasks that carry a GUID or numbered suffix).
+#   group       = one lowercase word. Default items: a descriptive tag ("xbox",
+#                 "telemetry", ...). Add-ons: "optional" or "optin".
+#   confidence  = "high"   a fetched source states it (docs/research-recommended.md)
+#                 "medium" a script/snippet or well-known maintainer knowledge; names
+#                          believed correct, not yet checked on a clean PC
+#                 "low"    unverified candidate: never in the defaults (must be an add-on)
+#   why         = one sentence: why it is safe to close/stop/disable temporarily.
+#   side_effect = one sentence: what the user notices while it is off.
+#   method      = optional, processes only: "close" (default), "suspend" or "kill".
+#                 Services always "stop", tasks always "disable" (both temporary: undone
+#                 when the toggle is turned off).
+#   display     = optional friendly name.
+#   condition   = optional, only act when it holds right now:
+#                 "no_printer"  no physical printer is installed (virtual ones such as
+#                               Microsoft Print to PDF do not count; unknown = skip).
+#
+# Never listed here (a test enforces it): the helper's never-touch services and task
+# folders, protected process names, and the NEVER_RECOMMEND lists in profiles.rs (Windows
+# Update and Edge update, security and repair tasks, Bluetooth, remote access, OEM control
+# software).
+#
+# Adding an entry: copy a block, fill every field, run `cargo test -p holdmyram-core`.
+
+format_version = 1
+
+# ================================================================ Processes: default (Recommended)
+
+[[item]]
+kind = "process"
+name = "GameBar.exe"
+display = "Xbox Game Bar"
+group = "xbox"
+confidence = "medium"
+why = "Xbox Game Bar overlay; Windows starts it again when you press Win+G."
+side_effect = "The Game Bar overlay and background recording are off until it is reopened."
+
+[[item]]
+kind = "process"
+name = "GameBarFTServer.exe"
+display = "Xbox Game Bar helper"
+group = "xbox"
+confidence = "medium"
+why = "Background broker for the Game Bar overlay; it is started again on demand."
+side_effect = "Game Bar widgets stop until Game Bar is opened again."
+
+[[item]]
+kind = "process"
+name = "Widgets.exe"
+display = "Windows Widgets"
+group = "widgets"
+confidence = "medium"
+why = "The Widgets board; Windows starts it again when you open Widgets."
+side_effect = "The widgets panel takes a moment longer to open the next time."
+
+[[item]]
+kind = "process"
+name = "WidgetService.exe"
+display = "Windows Widgets service"
+group = "widgets"
+confidence = "medium"
+why = "Feeds data to the Widgets board; restarted on demand."
+side_effect = "Widget content (weather, news) refreshes when the board is next opened."
+
+[[item]]
+kind = "process"
+name = "PhoneExperienceHost.exe"
+display = "Phone Link"
+group = "phone"
+confidence = "medium"
+why = "Phone Link background host; only needed while you use your phone from the PC."
+side_effect = "Phone notifications, messages and calls on the PC stop until Phone Link runs again."
+
+# ================================================================ Processes: opt-in
+
+[[item]]
+kind = "process"
+name = "CrossDeviceResume.exe"
+display = "Cross-device resume"
+group = "optin"
+confidence = "low"
+why = "Offers to resume activity started on a linked phone."
+side_effect = "The 'resume from your phone' prompt does not appear."
+
+[[item]]
+kind = "process"
+name = "CrossDeviceService.exe"
+display = "Cross-device service"
+group = "optin"
+confidence = "low"
+why = "Windows cross-device experiences host (linked phone features)."
+side_effect = "Linked-phone features pause until it is started again."
+
+[[item]]
+kind = "process"
+name = "YourPhone.exe"
+display = "Phone Link (older name)"
+group = "optin"
+confidence = "low"
+why = "Older name of the Phone Link app; only needed while you use your phone from the PC."
+side_effect = "Phone notifications, messages and calls on the PC stop until it runs again."
+
+[[item]]
+kind = "process"
+name = "jusched.exe"
+display = "Java Update Scheduler"
+group = "optin"
+confidence = "medium"
+why = "Only checks for Java updates."
+side_effect = "No Java update checks while it is closed."
+
+[[item]]
+kind = "process"
+name = "AdobeARM.exe"
+display = "Adobe Acrobat updater"
+group = "optin"
+confidence = "medium"
+why = "Adobe Reader/Acrobat update checker."
+side_effect = "No Acrobat update checks while it is closed."
+
+[[item]]
+kind = "process"
+name = "GoogleUpdate.exe"
+display = "Google Update"
+group = "optin"
+confidence = "medium"
+why = "Google software updater; it runs again on its next schedule."
+side_effect = "No Chrome or Google app update checks while it is closed."
+
+[[item]]
+kind = "process"
+name = "AGSService.exe"
+display = "Adobe Genuine Service"
+group = "optin"
+confidence = "medium"
+why = "Adobe licence check; not needed while you work in other apps."
+side_effect = "None visible; it starts itself again later."
+
+[[item]]
+kind = "process"
+name = "AsusSoftwareManagerAgent.exe"
+display = "ASUS Software Manager agent"
+group = "optin"
+confidence = "medium"
+why = "OEM updater agent for ASUS apps and drivers."
+side_effect = "ASUS update checks pause; other ASUS utilities may notice."
+
+[[item]]
+kind = "process"
+name = "RadeonSoftware.exe"
+display = "AMD Software window"
+group = "optin"
+confidence = "medium"
+why = "The AMD Software (Adrenalin) user interface only."
+side_effect = "The AMD Software window closes; overlay settings stay as set."
+
+[[item]]
+kind = "process"
+name = "NvBackend.exe"
+display = "NVIDIA app backend"
+group = "optin"
+confidence = "low"
+why = "Background part of the NVIDIA app (game optimisation and update checks)."
+side_effect = "NVIDIA app game settings and driver update checks pause."
+
+# ================================================================ Processes: optional apps
+
+[[item]]
+kind = "process"
+name = "Discord.exe"
+group = "optional"
+confidence = "high"
+why = "Chat client; safe to close and reopen."
+side_effect = "You leave voice calls and stop getting messages until it is reopened."
+
+[[item]]
+kind = "process"
+name = "Spotify.exe"
+group = "optional"
+confidence = "high"
+why = "Music player; safe to close."
+side_effect = "Playback stops."
+
+[[item]]
+kind = "process"
+name = "steam.exe"
+display = "Steam"
+group = "optional"
+confidence = "medium"
+why = "Game client; only needed by games that require Steam running."
+side_effect = "Downloads stop, and games that rely on Steam may close."
+
+[[item]]
+kind = "process"
+name = "steamwebhelper.exe"
+display = "Steam web helper"
+group = "optional"
+confidence = "medium"
+why = "Chromium helper that draws the Steam interface; often several hundred MB."
+side_effect = "The Steam window goes blank and the in-game overlay may stop working."
+
+[[item]]
+kind = "process"
+name = "chrome.exe"
+display = "Google Chrome"
+group = "optional"
+confidence = "medium"
+why = "Browser; often the biggest RAM user."
+side_effect = "Unsaved form data is lost; tabs come back only if Chrome restores them."
+
+[[item]]
+kind = "process"
+name = "EpicGamesLauncher.exe"
+display = "Epic Games Launcher"
+group = "optional"
+confidence = "medium"
+why = "Game launcher; not needed while a game is already running unless the game requires it."
+side_effect = "Downloads stop; some Epic games need the launcher running."
+
+[[item]]
+kind = "process"
+name = "ms-teams.exe"
+display = "Microsoft Teams"
+group = "optional"
+confidence = "low"
+why = "Chat and meetings client; safe to close when you are not in a meeting."
+side_effect = "You stop getting Teams messages and calls; work accounts may enforce it running."
+
+[[item]]
+kind = "process"
+name = "Teams.exe"
+display = "Microsoft Teams (classic)"
+group = "optional"
+confidence = "low"
+why = "Chat and meetings client; safe to close when you are not in a meeting."
+side_effect = "You stop getting Teams messages and calls; work accounts may enforce it running."
+
+[[item]]
+kind = "process"
+name = "OneDrive.exe"
+group = "optional"
+confidence = "medium"
+why = "Sync client; changes sync when it runs again."
+side_effect = "File syncing pauses until OneDrive is reopened."
+
+[[item]]
+kind = "process"
+name = "XboxPcApp.exe"
+display = "Xbox app"
+group = "optional"
+confidence = "medium"
+why = "Xbox app window; games keep running without it."
+side_effect = "Downloads and installs started from the Xbox app stop."
+
+[[item]]
+kind = "process"
+name = "XboxPcAppFT.exe"
+display = "Xbox app helper"
+group = "optional"
+confidence = "low"
+why = "Companion process of the Xbox app (role unverified)."
+side_effect = "Xbox app features pause until the app is reopened."
+
+[[item]]
+kind = "process"
+name = "tailscale-ipn.exe"
+display = "Tailscale tray"
+group = "optional"
+confidence = "medium"
+why = "Tailscale tray interface only; the VPN itself runs in the Tailscale service."
+side_effect = "The Tailscale tray icon disappears; the connection stays up."
+
+# ================================================================ Services: default (Recommended+)
+
+[[item]]
+kind = "service"
+name = "DiagTrack"
+display = "Connected User Experiences and Telemetry"
+group = "telemetry"
+confidence = "high"
+why = "Sends diagnostic data to Microsoft; not needed for normal use."
+side_effect = "None visible."
+
+[[item]]
+kind = "service"
+name = "MapsBroker"
+display = "Downloaded Maps Manager"
+group = "maps"
+confidence = "high"
+why = "Manages offline maps for the Maps app."
+side_effect = "Offline maps do not update."
+
+[[item]]
+kind = "service"
+name = "CscService"
+display = "Offline Files"
+group = "files"
+confidence = "high"
+why = "Offline Files for network shares; unused on most home PCs."
+side_effect = "Offline copies of network files do not sync."
+
+[[item]]
+kind = "service"
+name = "Spooler"
+display = "Print Spooler"
+group = "printing"
+confidence = "high"
+condition = "no_printer"
+why = "Only needed for printing, and no physical printer is installed."
+side_effect = "Printing, including Microsoft Print to PDF, is unavailable until the toggle is off."
+
+[[item]]
+kind = "service"
+name = "dmwappushservice"
+display = "Device Management WAP Push"
+group = "telemetry"
+confidence = "medium"
+why = "Routes device-management push messages; used alongside telemetry."
+side_effect = "None visible on a home PC that is not managed by an organisation."
+
+[[item]]
+kind = "service"
+name = "diagnosticshub.standardcollector.service"
+display = "Diagnostics Hub collector"
+group = "telemetry"
+confidence = "medium"
+why = "Collects traces for developer diagnostics tools."
+side_effect = "Visual Studio diagnostics sessions cannot start while it is stopped."
+
+[[item]]
+kind = "service"
+name = "NvTelemetryContainer"
+display = "NVIDIA Telemetry Container"
+group = "telemetry"
+confidence = "medium"
+why = "Older NVIDIA driver telemetry; not needed for the GPU to work."
+side_effect = "None visible."
+
+[[item]]
+kind = "service"
+name = "WMPNetworkSvc"
+display = "Windows Media Player Network Sharing"
+group = "media"
+confidence = "medium"
+why = "Shares the Media Player library on the network; rarely used."
+side_effect = "Media library sharing pauses."
+
+# ================================================================ Services: opt-in
+
+[[item]]
+kind = "service"
+name = "Fax"
+group = "optin"
+confidence = "low"
+why = "Fax sending and receiving; almost never used."
+side_effect = "Faxing is unavailable."
+
+[[item]]
+kind = "service"
+name = "RetailDemo"
+display = "Retail Demo"
+group = "optin"
+confidence = "low"
+why = "Store demo mode; unused on a personal PC."
+side_effect = "None visible."
+
+[[item]]
+kind = "service"
+name = "SysMain"
+display = "SysMain (Superfetch)"
+group = "optin"
+confidence = "medium"
+why = "Preloads apps into RAM; sources disagree on whether it helps on an SSD."
+side_effect = "Apps may start a little slower until it runs again."
+
+[[item]]
+kind = "service"
+name = "WSearch"
+display = "Windows Search"
+group = "optin"
+confidence = "high"
+why = "Search indexer; saves RAM and disk activity while stopped."
+side_effect = "Start, Explorer and Outlook searches are slower or incomplete."
+
+[[item]]
+kind = "service"
+name = "SharedAccess"
+display = "Internet Connection Sharing"
+group = "optin"
+confidence = "medium"
+why = "Shares this PC's connection with other devices; rarely used."
+side_effect = "Mobile hotspot and connection sharing stop."
+
+[[item]]
+kind = "service"
+name = "StorSvc"
+display = "Storage Service"
+group = "optin"
+confidence = "medium"
+why = "Storage settings and Storage Sense."
+side_effect = "Storage settings and app moves between drives may not work."
+
+[[item]]
+kind = "service"
+name = "CDPUserSvc"
+display = "Connected Devices Platform user service"
+group = "optin"
+confidence = "medium"
+why = "Cross-device and Nearby Sharing plumbing."
+side_effect = "Nearby Sharing and Phone Link features pause."
+
+[[item]]
+kind = "service"
+name = "PimIndexMaintenanceSvc"
+display = "Contact Data indexing"
+group = "optin"
+confidence = "medium"
+why = "Indexes contacts for search."
+side_effect = "Contact search in Mail and People may be slower."
+
+[[item]]
+kind = "service"
+name = "UnistoreSvc"
+display = "User Data Storage"
+group = "optin"
+confidence = "medium"
+why = "Stores contacts, calendar and messages for apps."
+side_effect = "Mail, Calendar and People may stop working until it runs again."
+
+[[item]]
+kind = "service"
+name = "UserDataSvc"
+display = "User Data Access"
+group = "optin"
+confidence = "medium"
+why = "Gives apps access to contacts, calendar and messages."
+side_effect = "Mail, Calendar and People may stop working until it runs again."
+
+[[item]]
+kind = "service"
+name = "PhoneSvc"
+display = "Phone Service"
+group = "optin"
+confidence = "medium"
+why = "Telephony state; only used for calls through Phone Link."
+side_effect = "Phone Link calling pauses."
+
+[[item]]
+kind = "service"
+name = "XblAuthManager"
+display = "Xbox Live Auth Manager"
+group = "optin"
+confidence = "medium"
+why = "Xbox sign-in; not needed by games outside Xbox / Game Pass."
+side_effect = "Xbox and Game Pass games cannot sign in."
+
+[[item]]
+kind = "service"
+name = "XblGameSave"
+display = "Xbox Live Game Save"
+group = "optin"
+confidence = "medium"
+why = "Syncs Xbox cloud saves."
+side_effect = "Xbox cloud saves do not sync while stopped."
+
+[[item]]
+kind = "service"
+name = "XboxNetApiSvc"
+display = "Xbox Live Networking"
+group = "optin"
+confidence = "medium"
+why = "Xbox networking checks."
+side_effect = "Xbox multiplayer connectivity checks fail."
+
+[[item]]
+kind = "service"
+name = "XboxGipSvc"
+display = "Xbox Accessory Management"
+group = "optin"
+confidence = "medium"
+why = "Xbox accessory configuration and firmware updates."
+side_effect = "Controller remapping and firmware updates pause."
+
+[[item]]
+kind = "service"
+name = "gupdate"
+display = "Google Update"
+group = "optin"
+confidence = "medium"
+why = "Google software updater."
+side_effect = "No Chrome or Google app updates while it is stopped."
+
+[[item]]
+kind = "service"
+name = "gupdatem"
+display = "Google Update (on demand)"
+group = "optin"
+confidence = "medium"
+why = "Google software updater."
+side_effect = "No Chrome or Google app updates while it is stopped."
+
+[[item]]
+kind = "service"
+name = "MozillaMaintenance"
+display = "Mozilla Maintenance Service"
+group = "optin"
+confidence = "medium"
+why = "Installs Firefox and Thunderbird updates in the background."
+side_effect = "Firefox updates wait until it runs again."
+
+[[item]]
+kind = "service"
+name = "AdobeARMservice"
+display = "Adobe Acrobat Update Service"
+group = "optin"
+confidence = "medium"
+why = "Adobe Reader/Acrobat updater."
+side_effect = "No Acrobat updates while it is stopped."
+
+# ================================================================ Scheduled tasks: default (Recommended+)
+# Disabled while the toggle is on so they cannot start in the middle of a game; enabled
+# again on toggle off. Names from third-party scripts (MEDIUM); a missing task is skipped.
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Customer Experience Improvement Program\Consolidator'
+display = "CEIP Consolidator"
+group = "telemetry"
+confidence = "medium"
+why = "Customer Experience Improvement Program upload."
+side_effect = "None visible."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Customer Experience Improvement Program\KernelCeipTask'
+display = "CEIP kernel data"
+group = "telemetry"
+confidence = "medium"
+why = "Collects kernel telemetry for CEIP."
+side_effect = "None visible."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Customer Experience Improvement Program\UsbCeip'
+display = "CEIP USB data"
+group = "telemetry"
+confidence = "medium"
+why = "Collects USB usage telemetry."
+side_effect = "None visible."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Customer Experience Improvement Program\BthSQM'
+display = "CEIP Bluetooth data"
+group = "telemetry"
+confidence = "medium"
+why = "Collects Bluetooth usage telemetry (Bluetooth itself is untouched)."
+side_effect = "None visible."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Customer Experience Improvement Program\Uploader'
+display = "CEIP uploader"
+group = "telemetry"
+confidence = "medium"
+why = "Uploads CEIP data."
+side_effect = "None visible."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser'
+display = "Compatibility Appraiser"
+group = "telemetry"
+confidence = "medium"
+why = "Telemetry scan of installed programs; known for heavy disk and CPU bursts."
+side_effect = "None visible; it runs on its next schedule after the toggle is off."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Application Experience\ProgramDataUpdater'
+display = "Program Data Updater"
+group = "telemetry"
+confidence = "medium"
+why = "Collects program telemetry."
+side_effect = "None visible."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Application Experience\StartupAppTask'
+display = "Startup app impact scan"
+group = "telemetry"
+confidence = "medium"
+why = "Measures startup apps for Task Manager's impact column."
+side_effect = "Task Manager's startup impact may be out of date."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Application Experience\AitAgent'
+display = "Application Impact Telemetry"
+group = "telemetry"
+confidence = "medium"
+why = "Application impact telemetry agent."
+side_effect = "None visible."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector'
+display = "Disk diagnostic data collector"
+group = "telemetry"
+confidence = "medium"
+why = "Sends disk diagnostic data to Microsoft."
+side_effect = "None visible."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Feedback\Siuf\DmClient'
+display = "Feedback client"
+group = "telemetry"
+confidence = "medium"
+why = "Feedback Hub data collection."
+side_effect = "None visible."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Feedback\Siuf\DmClientOnScenarioDownload'
+display = "Feedback scenario download"
+group = "telemetry"
+confidence = "medium"
+why = "Feedback Hub data collection."
+side_effect = "None visible."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\PI\Sqm-Tasks'
+display = "SQM tasks"
+group = "telemetry"
+confidence = "medium"
+why = "Software Quality Metrics collection."
+side_effect = "None visible."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Autochk\Proxy'
+display = "Autochk proxy (SQM data)"
+group = "telemetry"
+confidence = "medium"
+why = "Uploads disk-check telemetry."
+side_effect = "None visible."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\NetTrace\GatherNetworkInfo'
+display = "Gather network info"
+group = "telemetry"
+confidence = "medium"
+why = "Collects network diagnostics information."
+side_effect = "None visible."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Windows Error Reporting\QueueReporting'
+display = "Error report upload"
+group = "telemetry"
+confidence = "medium"
+why = "Uploads queued crash reports."
+side_effect = "Queued error reports are sent later."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Maps\MapsUpdateTask'
+display = "Maps update"
+group = "maps"
+confidence = "medium"
+why = "Updates offline maps."
+side_effect = "Offline maps update later."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Maps\MapsToastTask'
+display = "Maps notifications"
+group = "maps"
+confidence = "medium"
+why = "Shows Maps notifications."
+side_effect = "No Maps notifications."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Defrag\ScheduledDefrag'
+display = "Scheduled optimise drives"
+group = "maintenance"
+confidence = "medium"
+why = "Drive optimisation (defrag/TRIM); keeps it from starting mid-game."
+side_effect = "Drive optimisation runs on its next schedule after the toggle is off."
+
+# ================================================================ Scheduled tasks: opt-in
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Maintenance\WinSAT'
+display = "Windows performance assessment"
+group = "optin"
+confidence = "medium"
+why = "Benchmarks the PC during maintenance."
+side_effect = "The performance assessment runs later."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Shell\FamilySafety*'
+display = "Family Safety tasks"
+group = "optin"
+confidence = "medium"
+why = "Microsoft Family Safety monitoring."
+side_effect = "Family Safety limits may not refresh; do not use on a child's account."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Device Information\Device'
+display = "Device information"
+group = "optin"
+confidence = "medium"
+why = "Collects device information."
+side_effect = "None visible."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Diagnosis\Scheduled'
+display = "Scheduled diagnostics"
+group = "optin"
+confidence = "medium"
+why = "Runs automatic troubleshooters during maintenance."
+side_effect = "Automatic troubleshooting runs later."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\CloudExperienceHost\CreateObjectTask'
+display = "Cloud experience host"
+group = "optin"
+confidence = "medium"
+why = "Account and setup experience helper."
+side_effect = "Some account setup prompts may be delayed."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\SettingSync\BackgroundUploadTask'
+display = "Settings sync upload"
+group = "optin"
+confidence = "medium"
+why = "Uploads synced settings."
+side_effect = "Settings sync waits until the toggle is off."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\PushToInstall\Registration'
+display = "Push-to-install registration"
+group = "optin"
+confidence = "medium"
+why = "Registers the PC for remote app installs from the Store."
+side_effect = "Remote installs from the web Store wait."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\File Classification Infrastructure\Property Definition Sync'
+display = "File classification sync"
+group = "optin"
+confidence = "medium"
+why = "Syncs file classification definitions (business feature)."
+side_effect = "None visible on a home PC."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\XblGameSave\XblGameSaveTask'
+display = "Xbox game save sync"
+group = "optin"
+confidence = "medium"
+why = "Syncs Xbox cloud saves."
+side_effect = "Xbox cloud saves do not sync while disabled."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\XblGameSave\XblGameSaveTaskLogon'
+display = "Xbox game save sync (logon)"
+group = "optin"
+confidence = "medium"
+why = "Syncs Xbox cloud saves at sign-in."
+side_effect = "Xbox cloud saves do not sync while disabled."
+
+[[item]]
+kind = "task"
+name = '\Microsoft\Windows\Chkdsk\ProactiveScan'
+display = "Proactive disk scan"
+group = "optin"
+confidence = "medium"
+why = "Background file-system health scan."
+side_effect = "The proactive disk check runs later."
+
+[[item]]
+kind = "task"
+name = '\GoogleUpdateTaskMachineCore*'
+display = "Google update (daily)"
+group = "optin"
+confidence = "low"
+why = "Google software update check."
+side_effect = "No Chrome update checks while disabled."
+
+[[item]]
+kind = "task"
+name = '\GoogleUpdateTaskMachineUA*'
+display = "Google update (hourly)"
+group = "optin"
+confidence = "low"
+why = "Google software update check."
+side_effect = "No Chrome update checks while disabled."

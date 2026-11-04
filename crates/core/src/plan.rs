@@ -16,6 +16,12 @@ const PROTECTED_NAMES: &[&str] = &[
     "faceitclient.exe",
 ];
 
+/// True when `name` (an exe name, any case) is on the protected-process list.
+pub fn is_protected_name(name: &str) -> bool {
+    let l = name.trim().to_lowercase();
+    PROTECTED_NAMES.contains(&l.as_str())
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Skipped {
     Foreground,

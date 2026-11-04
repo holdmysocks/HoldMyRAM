@@ -1,0 +1,10 @@
+HoldMyRAM {{VERSION}} - quick start
+
+1. Keep holdmyram.exe and holdmyram-helper.exe in the same folder.
+2. Double-click holdmyram.exe. A tray icon appears (check the ^ arrow).
+3. Click the tray icon to choose what to close. Default hotkey: Ctrl+Alt+R.
+
+Windows may show "Windows protected your PC" (SmartScreen): click
+"More info", then "Run anyway". The program is not code-signed.
+
+Full details: README.txt

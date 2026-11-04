@@ -152,13 +152,13 @@ impl Source {
 /// Seconds between 1601-01-01 and 1970-01-01, in 100 ns units.
 const FILETIME_UNIX_EPOCH: u64 = 116_444_736_000_000_000;
 
-fn filetime_now() -> u64 {
+pub(crate) fn filetime_now() -> u64 {
     let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     FILETIME_UNIX_EPOCH + d.as_secs() * 10_000_000 + u64::from(d.subsec_nanos()) / 100
 }
 
 /// The 12-byte StartupApproved value Task Manager writes.
-fn approved_bytes(enabled: bool, filetime: u64) -> [u8; 12] {
+pub(crate) fn approved_bytes(enabled: bool, filetime: u64) -> [u8; 12] {
     let mut b = [0u8; 12];
     if enabled {
         b[0] = 0x02;
@@ -171,7 +171,7 @@ fn approved_bytes(enabled: bool, filetime: u64) -> [u8; 12] {
 
 /// Absent or empty value: enabled. Otherwise the low bit of byte 0 is "disabled"
 /// (same rule as scan.rs).
-fn bytes_enabled(data: Option<&[u8]>) -> bool {
+pub(crate) fn bytes_enabled(data: Option<&[u8]>) -> bool {
     match data.and_then(|d| d.first()) {
         None => true,
         Some(b) => b & 0x01 == 0,
@@ -354,7 +354,7 @@ impl Drop for Key {
     }
 }
 
-fn wide(s: &str) -> Vec<u16> {
+pub(crate) fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
@@ -363,7 +363,7 @@ fn reg_err(what: &str, r: WIN32_ERROR) -> String {
 }
 
 /// Raw data of one value. `Ok(None)` when the key or the value does not exist.
-fn read_value(root: HKEY, path: &str, name: &str) -> Result<Option<Vec<u8>>, String> {
+pub(crate) fn read_value(root: HKEY, path: &str, name: &str) -> Result<Option<Vec<u8>>, String> {
     let p = wide(path);
     let mut h = HKEY::default();
     let r = unsafe { RegOpenKeyExW(root, PCWSTR(p.as_ptr()), Some(0), KEY_QUERY_VALUE | KEY_WOW64_64KEY, &mut h) };
@@ -407,7 +407,7 @@ fn read_value(root: HKEY, path: &str, name: &str) -> Result<Option<Vec<u8>>, Str
 /// Write a REG_BINARY value (creating the key if needed), read it back and compare.
 /// On a failed write or mismatch, put `prev` back (or remove the value if there was
 /// none), best effort, and return an error.
-fn write_verified(root: HKEY, path: &str, name: &str, data: &[u8], prev: Option<&[u8]>) -> Result<(), String> {
+pub(crate) fn write_verified(root: HKEY, path: &str, name: &str, data: &[u8], prev: Option<&[u8]>) -> Result<(), String> {
     let p = wide(path);
     let mut h = HKEY::default();
     let r = unsafe {

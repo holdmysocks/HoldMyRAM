@@ -1,7 +1,8 @@
 //! User configuration: TOML on disk, atomic saves, tolerant loading, export/import.
 
 use crate::admin::rules;
-use crate::types::{Selection, SelectionKind};
+use crate::profiles::Builtin;
+use crate::types::{AddonRef, Selection, SelectionKind};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
@@ -22,10 +23,14 @@ pub enum Theme {
     System,
 }
 
+/// A user profile (editable). The built-in Recommended profiles are not stored here; see
+/// `profiles::Builtin`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Profile {
     pub name: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
     pub selections: Vec<Selection>,
 }
 
@@ -38,7 +43,32 @@ pub struct Config {
     /// Selections used when no profile is active.
     pub selections: Vec<Selection>,
     pub profiles: Vec<Profile>,
+    /// A user profile name, a built-in profile name ("Recommended", "Recommended+"), or
+    /// None for the top-level selections. A field missing from an existing file loads as
+    /// None (keeps old behaviour); a brand-new config (no file) starts at "Recommended".
+    #[serde(default)]
     pub active_profile: Option<String>,
+    /// The first-run tutorial was shown (or skipped). See `load_from` for the upgrade rule.
+    #[serde(default)]
+    pub tutorial_seen: bool,
+    /// Optional ("add-on") items of the built-in Recommended profiles the user turned on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recommended_addons: Vec<AddonRef>,
+    /// Whole add-on groups ("optional", "optin") of the built-in profiles turned on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recommended_addon_groups: Vec<String>,
+    /// Check GitHub for a newer release about a minute after start (and when the window
+    /// opens, at most every 6 hours). Missing in old files: true.
+    #[serde(default = "yes")]
+    pub auto_check_updates: bool,
+    /// Download and verify a newer release in the background. Installing always needs a
+    /// click. Missing in old files: true.
+    #[serde(default = "yes")]
+    pub auto_download_updates: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -49,7 +79,12 @@ impl Default for Config {
             grace_seconds: DEFAULT_GRACE_SECONDS,
             selections: Vec::new(),
             profiles: Vec::new(),
-            active_profile: None,
+            active_profile: Some(crate::profiles::RECOMMENDED.to_string()),
+            tutorial_seen: false,
+            recommended_addons: Vec::new(),
+            recommended_addon_groups: Vec::new(),
+            auto_check_updates: true,
+            auto_download_updates: true,
         }
     }
 }
@@ -105,7 +140,7 @@ fn is_valid_exe_name(name: &str) -> bool {
 }
 
 const ANTI_CHEAT_SERVICES: &[&str] =
-    &["vgc", "vgtray", "BEService", "EasyAntiCheat", "EasyAntiCheat_EOS", "EAAntiCheat.GameService", "FACEITService"];
+    &["vgc", "vgtray", "BEService", "BEDaisy", "EasyAntiCheat", "EasyAntiCheat_EOS", "EAAntiCheat.GameService", "FACEITService", "FACEITClient"];
 const VENDOR_SERVICES: &[&str] = &[
     "NvContainerLocalSystem",
     "AsusOptimization",
@@ -142,7 +177,7 @@ pub fn admin_block_reason(kind: SelectionKind, name: &str) -> Option<String> {
 }
 
 /// Shape checks: name syntax for its kind, and a method that fits the kind.
-fn check_shape(s: &Selection) -> Result<(), String> {
+pub(crate) fn check_shape(s: &Selection) -> Result<(), String> {
     if !s.kind.allows(s.method) {
         let want = match s.kind {
             SelectionKind::Process => "close, suspend or kill",
@@ -211,11 +246,29 @@ impl Config {
             )));
         }
         validate_selections(&self.selections, "selections", blocked_too)?;
+        for a in &self.recommended_addons {
+            if a.name.trim().is_empty() || a.name.len() > 1024 || a.name.contains('\0') {
+                return Err(ConfigError::Invalid(format!("recommended_addons: bad name {:?}", a.name)));
+            }
+        }
+        for g in &self.recommended_addon_groups {
+            if !crate::profiles::ADDON_GROUPS.iter().any(|x| x.eq_ignore_ascii_case(g.trim())) {
+                return Err(ConfigError::Invalid(format!(
+                    "recommended_addon_groups: unknown group {g:?} (expected {})",
+                    crate::profiles::ADDON_GROUPS.join(" or ")
+                )));
+            }
+        }
         let mut seen: Vec<String> = Vec::new();
         for p in &self.profiles {
             let n = p.name.trim();
             if n.is_empty() {
                 return Err(ConfigError::Invalid("profile with empty name".into()));
+            }
+            if Builtin::from_name(n).is_some() {
+                return Err(ConfigError::Invalid(format!(
+                    "{n:?} is the name of a built-in profile; choose another name"
+                )));
             }
             let lower = n.to_lowercase();
             if seen.contains(&lower) {
@@ -225,7 +278,7 @@ impl Config {
             validate_selections(&p.selections, &format!("profile {n:?}"), blocked_too)?;
         }
         if let Some(a) = &self.active_profile {
-            if self.find_profile(a).is_none() {
+            if Builtin::from_name(a).is_none() && self.find_profile(a).is_none() {
                 return Err(ConfigError::Invalid(format!(
                     "active profile {a:?} does not exist"
                 )));
@@ -234,20 +287,67 @@ impl Config {
         Ok(())
     }
 
-    fn find_profile(&self, name: &str) -> Option<&Profile> {
+    /// User profile by name (case-insensitive, trimmed). Never a built-in.
+    pub fn find_profile(&self, name: &str) -> Option<&Profile> {
         self.profiles
             .iter()
             .find(|p| p.name.trim().eq_ignore_ascii_case(name.trim()))
     }
 
-    /// The selections that apply now: the active profile's if one is set and
-    /// exists, otherwise the top-level selections.
+    /// The active built-in profile, if the active profile is one.
+    pub fn active_builtin(&self) -> Option<Builtin> {
+        self.active_profile.as_deref().and_then(Builtin::from_name)
+    }
+
+    /// The fixed selections that apply now: the active user profile's if one is set and
+    /// exists, otherwise the top-level selections. Empty when a built-in profile is
+    /// active: those are resolved at toggle time (`profiles::toggle_selections`).
     pub fn effective_selections(&self) -> &[Selection] {
+        if self.active_builtin().is_some() {
+            return &[];
+        }
         self.active_profile
             .as_deref()
             .and_then(|n| self.find_profile(n))
             .map(|p| p.selections.as_slice())
             .unwrap_or(&self.selections)
+    }
+
+    /// A profile name not used by any user profile or built-in: `base`, else
+    /// `base (2)`, `base (3)`, ...
+    pub fn unique_profile_name(&self, base: &str) -> String {
+        let base = base.trim();
+        let taken = |n: &str| Builtin::from_name(n).is_some() || self.find_profile(n).is_some();
+        if !base.is_empty() && !taken(base) {
+            return base.to_string();
+        }
+        (2..).map(|i| format!("{base} ({i})")).find(|n| !taken(n)).expect("unbounded")
+    }
+
+    /// Upgrade fixes applied when loading an existing file. `raw` is the file's parsed
+    /// TOML, used to tell a missing key from a default value. Returns notes for the warning.
+    fn migrate(&mut self, raw: &toml::Table) -> Vec<String> {
+        let mut notes = Vec::new();
+        // A user profile named like a built-in (made before built-ins existed): rename it,
+        // and keep it active if it was.
+        for i in 0..self.profiles.len() {
+            let old = self.profiles[i].name.clone();
+            if Builtin::from_name(&old).is_none() {
+                continue;
+            }
+            let new = self.unique_profile_name(&format!("{} (custom)", old.trim()));
+            if self.active_profile.as_deref().is_some_and(|a| a.trim().eq_ignore_ascii_case(old.trim())) {
+                self.active_profile = Some(new.clone());
+            }
+            notes.push(format!("profile {old:?} renamed to {new:?} (that name is now a built-in profile)"));
+            self.profiles[i].name = new;
+        }
+        // Existing users should not get the first-run tutorial: a file without the key
+        // that already holds selections or profiles counts as seen.
+        if !raw.contains_key("tutorial_seen") {
+            self.tutorial_seen = !self.selections.is_empty() || !self.profiles.is_empty();
+        }
+        notes
     }
 
     pub fn to_toml(&self) -> Result<String, ConfigError> {
@@ -256,7 +356,9 @@ impl Config {
 
     /// Parse and validate TOML text.
     pub fn from_toml(text: &str) -> Result<Config, ConfigError> {
-        let cfg: Config = toml::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        let raw: toml::Table = toml::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        let mut cfg: Config = toml::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        cfg.migrate(&raw);
         cfg.validate()?;
         Ok(cfg)
     }
@@ -283,14 +385,20 @@ impl Config {
         };
         // Lenient about never-touch entries (dropped with a warning) so that a blocked
         // service never costs the user the whole config; strict about everything else.
-        let parsed = toml::from_str::<Config>(&text)
+        let parsed = toml::from_str::<toml::Table>(&text)
+            .and_then(|raw| toml::from_str::<Config>(&text).map(|c| (raw, c)))
             .map_err(|e| ConfigError::Parse(e.to_string()))
-            .and_then(|c| c.validate_inner(false).map(|_| c));
+            .and_then(|(raw, mut c)| {
+                let notes = c.migrate(&raw);
+                c.validate_inner(false).map(|_| (c, notes))
+            });
         match parsed {
-            Ok(mut config) => {
+            Ok((mut config, mut notes)) => {
                 let dropped = config.strip_blocked();
-                let warning = (!dropped.is_empty())
-                    .then(|| format!("ignored selections HoldMyRAM never changes: {}", dropped.join("; ")));
+                if !dropped.is_empty() {
+                    notes.push(format!("ignored selections HoldMyRAM never changes: {}", dropped.join("; ")));
+                }
+                let warning = (!notes.is_empty()).then(|| notes.join("; "));
                 Loaded { config, warning }
             }
             Err(err) => {
@@ -341,7 +449,7 @@ impl Config {
     }
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
     if let Some(dir) = path.parent() {
         if !dir.as_os_str().is_empty() {
             fs::create_dir_all(dir)?;
@@ -460,6 +568,10 @@ mod tests {
         assert!(e.contains("Core Windows service, cannot be changed"), "{e}");
         let e = bad(Selection::service("EasyAntiCheat_EOS"));
         assert!(e.contains("Anti-cheat"), "{e}");
+        for s in ["BEDaisy", "faceitclient"] {
+            let e = bad(Selection::service(s));
+            assert!(e.contains("Anti-cheat"), "{e}");
+        }
         let e = bad(Selection::service("AudioSrv_1a2b3"));
         assert!(e.contains("Core Windows service"), "{e}");
         let e = bad(Selection::task(r"\Microsoft\Windows\Windows Defender\Windows Defender Scheduled Scan"));
@@ -503,10 +615,19 @@ mod tests {
             grace_seconds: 10,
             selections: vec![sel("chrome.exe", Method::Close)],
             profiles: vec![
-                Profile { name: "Gaming".into(), selections: vec![sel("Discord.exe", Method::Suspend), sel("Spotify.exe", Method::Kill)] },
-                Profile { name: "Work".into(), selections: vec![] },
+                Profile {
+                    name: "Gaming".into(),
+                    selections: vec![sel("Discord.exe", Method::Suspend), sel("Spotify.exe", Method::Kill)],
+                    ..Default::default()
+                },
+                Profile { name: "Work".into(), description: "Office hours".into(), selections: vec![] },
             ],
             active_profile: Some("Gaming".into()),
+            tutorial_seen: true,
+            recommended_addons: vec![AddonRef::new(SelectionKind::Process, "Discord.exe")],
+            recommended_addon_groups: vec!["optin".into()],
+            auto_check_updates: false,
+            auto_download_updates: true,
         }
     }
 
@@ -517,8 +638,106 @@ mod tests {
         assert_eq!(c.theme, Theme::Dark);
         assert_eq!(c.grace_seconds, 5);
         assert!(c.selections.is_empty() && c.profiles.is_empty());
-        assert_eq!(c.active_profile, None);
+        // A brand-new config starts on the built-in Recommended profile.
+        assert_eq!(c.active_profile.as_deref(), Some("Recommended"));
+        assert_eq!(c.active_builtin(), Some(Builtin::Recommended));
+        assert!(c.effective_selections().is_empty());
+        assert!(!c.tutorial_seen);
+        assert!(c.auto_check_updates && c.auto_download_updates);
         c.validate().unwrap();
+    }
+
+    #[test]
+    fn update_settings_default_on_for_old_files_and_round_trip() {
+        let dir = temp_dir();
+        let p = dir.join("config.toml");
+        fs::write(&p, "theme = \"light\"\n").unwrap();
+        let c = Config::load_from(&p).config;
+        assert!(c.auto_check_updates && c.auto_download_updates);
+        let mut c = c;
+        c.auto_check_updates = false;
+        c.save_to(&p).unwrap();
+        let back = Config::load_from(&p).config;
+        assert!(!back.auto_check_updates && back.auto_download_updates);
+    }
+
+    #[test]
+    fn existing_config_keeps_its_active_profile() {
+        let dir = temp_dir();
+        let p = dir.join("config.toml");
+        // No active_profile key: stays None (top-level selections), not Recommended.
+        fs::write(&p, "[[selections]]\nname = \"chrome.exe\"\n").unwrap();
+        let l = Config::load_from(&p);
+        assert_eq!(l.config.active_profile, None);
+        assert_eq!(l.config.effective_selections().len(), 1);
+        // A saved None stays None after a round trip.
+        l.config.save_to(&p).unwrap();
+        assert_eq!(Config::load_from(&p).config.active_profile, None);
+        // Built-in names are valid active profiles, case-insensitively.
+        fs::write(&p, "active_profile = \"recommended+\"\n").unwrap();
+        let l = Config::load_from(&p);
+        assert!(l.warning.is_none(), "{:?}", l.warning);
+        assert_eq!(l.config.active_builtin(), Some(Builtin::RecommendedPlus));
+    }
+
+    #[test]
+    fn tutorial_seen_migration() {
+        let dir = temp_dir();
+        let p = dir.join("config.toml");
+        let load = |text: &str| {
+            fs::write(&p, text).unwrap();
+            Config::load_from(&p).config.tutorial_seen
+        };
+        // No file at all: new user.
+        assert!(!Config::load_from(&dir.join("none.toml")).config.tutorial_seen);
+        // Existing file without the key: seen only if it has selections or profiles.
+        assert!(!load("theme = \"light\"\n"));
+        assert!(load("[[selections]]\nname = \"a.exe\"\n"));
+        assert!(load("[[profiles]]\nname = \"Empty\"\n"));
+        // An explicit value always wins.
+        assert!(!load("tutorial_seen = false\n[[selections]]\nname = \"a.exe\"\n"));
+        assert!(load("tutorial_seen = true\n"));
+        // Saved files carry the key, so the rule applies only once.
+        let mut c = Config::load_from(&p).config;
+        c.tutorial_seen = false;
+        c.selections.push(sel("a.exe", Method::Close));
+        c.save_to(&p).unwrap();
+        assert!(fs::read_to_string(&p).unwrap().contains("tutorial_seen = false"));
+        assert!(!Config::load_from(&p).config.tutorial_seen);
+    }
+
+    #[test]
+    fn user_profile_named_like_a_builtin_is_renamed_on_load() {
+        let dir = temp_dir();
+        let p = dir.join("config.toml");
+        fs::write(
+            &p,
+            "active_profile = \"Recommended\"\n[[profiles]]\nname = \"Recommended\"\n\
+             [[profiles.selections]]\nname = \"a.exe\"\n[[profiles]]\nname = \"recommended+\"\n",
+        )
+        .unwrap();
+        let l = Config::load_from(&p);
+        let names: Vec<_> = l.config.profiles.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["Recommended (custom)", "recommended+ (custom)"]);
+        assert_eq!(l.config.active_profile.as_deref(), Some("Recommended (custom)"));
+        assert_eq!(l.config.effective_selections().len(), 1);
+        assert!(l.warning.as_deref().unwrap().contains("renamed"), "{:?}", l.warning);
+        assert!(!dir.join("config.toml.bad").exists());
+        // Saving such a name is refused.
+        let mut c = Config::default();
+        c.profiles.push(Profile { name: "RECOMMENDED".into(), ..Default::default() });
+        assert!(c.validate().unwrap_err().to_string().contains("built-in"));
+    }
+
+    #[test]
+    fn unique_names_avoid_builtins_and_profiles() {
+        let c = sample();
+        assert_eq!(c.unique_profile_name("New"), "New");
+        assert_eq!(c.unique_profile_name("gaming"), "gaming (2)");
+        assert_eq!(c.unique_profile_name("Recommended"), "Recommended (2)");
+        let mut c2 = c.clone();
+        c2.profiles.push(Profile { name: "Gaming (2)".into(), ..Default::default() });
+        assert_eq!(c2.unique_profile_name("Gaming"), "Gaming (3)");
     }
 
     #[test]
@@ -621,7 +840,7 @@ mod tests {
         assert!(c.validate().is_err());
 
         let mut c = sample();
-        c.profiles.push(Profile { name: "gaming".into(), selections: vec![] });
+        c.profiles.push(Profile { name: "gaming".into(), ..Default::default() });
         assert!(c.validate().is_err());
 
         let mut c = sample();

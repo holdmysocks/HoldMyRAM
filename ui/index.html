@@ -7,79 +7,206 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>
-  <h1>HoldMyRAM</h1>
-  <span class="pill off" id="state-pill">OFF</span>
-  <button id="toggle-btn" class="primary">Turn on</button>
-  <span class="muted small" id="sel-summary"></span>
-  <span class="spacer"></span>
-  <span class="profile-box">
-    <label class="muted small" for="profile-sel">Profile</label>
-    <select id="profile-sel"></select>
-    <button id="profile-new" title="New profile (copies the current selection)">New</button>
-    <button id="profile-rename">Rename</button>
-    <button id="profile-delete" class="danger">Delete</button>
-  </span>
-  <button id="save-btn">Save</button>
-  <button id="settings-btn">Settings</button>
-</header>
-<div class="helperbar" id="helperbar">
-  <span class="muted small">Admin helper:</span>
-  <span class="pill off" id="helper-pill">off</span>
-  <span class="spinner" id="helper-spin" hidden role="status" aria-label="Waiting for approval"></span>
-  <button id="helper-arm" title="Approve administrator access now, so turning the toggle ON does not raise a prompt later">Arm admin helper</button>
-  <button id="helper-disarm" hidden>Disarm</button>
-  <span class="small bad-text" id="helper-err" hidden></span>
-</div>
-<div class="banner warn" id="warn-declined" hidden>Admin approval was declined; the toggle only closes processes until you arm the helper.</div>
-<div class="banner warn" id="warn-pending" hidden>Services/tasks are still waiting to be restored; toggle off to retry.</div>
-<div class="banner warn" id="warn-config" hidden></div>
-<div class="banner warn" id="warn-hotkey" hidden></div>
-<div class="banner bad" id="err" hidden></div>
-<div class="banner info" id="last-report" hidden></div>
-
-<div class="layout">
-  <nav>
-    <div id="tabs"></div>
-    <hr>
-    <label><input type="checkbox" id="only-selected"> Selected only</label>
-    <label><input type="checkbox" id="hide-ms" checked> Hide Microsoft tasks</label>
-    <hr>
-    <button id="rescan" style="width:100%">Rescan</button>
-    <button id="startup-btn" style="width:100%;margin-top:6px" title="Startup, service and task changes you made here, with Undo">Changes</button>
-    <p class="muted small" id="scan-status"></p>
+<header class="topbar">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2.5" class="logo-body"/><rect x="5" y="9" width="3" height="6" rx="1" class="logo-pin"/><rect x="10.5" y="9" width="3" height="6" rx="1" class="logo-pin"/><rect x="16" y="9" width="3" height="6" rx="1" class="logo-pin"/></svg>
+    <h1>HoldMyRAM</h1>
+    <span class="pill off" id="state-pill">OFF</span>
+  </div>
+  <nav class="tabs" id="main-nav" aria-label="Sections">
+    <button type="button" data-tab="home">Home</button>
+    <button type="button" data-tab="advanced">Advanced</button>
+    <button type="button" data-tab="profiles">Profiles</button>
+    <button type="button" data-tab="settings">Settings</button>
   </nav>
-  <section class="main">
-    <div class="toolbar">
-      <input type="search" id="search" placeholder="Search name, publisher, path..." autocomplete="off">
-      <label class="muted small" for="sort">Sort</label>
+  <div class="hdr-right">
+    <span class="unsaved small" id="unsaved" hidden>Unsaved changes</span>
+    <button type="button" id="save-btn" disabled>Save</button>
+  </div>
+</header>
+
+<div class="banners">
+  <div class="banner warn" id="warn-config" role="status" hidden></div>
+  <div class="banner warn" id="warn-hotkey" role="status" hidden></div>
+  <div class="banner bad" id="err" role="alert" hidden></div>
+</div>
+
+<main>
+<!-- HOME -->
+<section class="screen" id="screen-home" aria-label="Home" hidden>
+  <div class="banner info upd-banner" id="upd-banner" hidden></div>
+  <div class="home-grid">
+    <div class="col">
+      <div class="card status" id="status-card">
+        <div class="status-head">
+          <span class="bigpill off" id="hs-pill">OFF</span>
+          <p class="status-sub" id="hs-sub"></p>
+        </div>
+        <button type="button" id="toggle-btn" class="primary big">Turn on</button>
+        <p class="hotkey-hint" id="hs-hotkey"></p>
+        <p class="muted small" id="hs-safe">The app you are using is never closed. Turning off (or quitting) restores everything.</p>
+        <p class="warn-text small" id="hs-unsaved" hidden></p>
+      </div>
+
+      <div class="banner warn" id="warn-declined" hidden>Admin approval was declined, so turning on only closes apps until you approve the admin helper.</div>
+      <div class="banner warn" id="warn-pending" hidden>Some services or tasks are still waiting to be restored. Turn off again to retry.</div>
+
+      <div class="card" id="helper-card" hidden>
+        <div class="card-head"><h2>Admin helper</h2>
+          <span class="pill off" id="helper-pill">off</span>
+          <span class="spinner" id="helper-spin" hidden role="status" aria-label="Waiting for approval"></span>
+        </div>
+        <p class="muted small" id="helper-text">This profile stops services or turns off tasks, which needs administrator approval (one Windows prompt). Approve it now, ahead of time, so the prompt does not appear later in the middle of a game.</p>
+        <div class="btn-row">
+          <button type="button" id="helper-arm">Approve admin helper</button>
+          <button type="button" id="helper-disarm" hidden>Disarm</button>
+        </div>
+        <p class="small bad-text" id="helper-err" hidden></p>
+      </div>
+
+      <div class="card" id="picker-card">
+        <div class="card-head"><h2>Profile</h2></div>
+        <p class="muted small">A profile is the set of things that gets closed when you turn on.</p>
+        <div id="picker" role="radiogroup" aria-label="Active profile"></div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card" id="preview-card">
+        <div class="card-head"><h2>What turning on will do right now</h2></div>
+        <div id="preview-body"></div>
+      </div>
+      <div class="card" id="addons-card" hidden>
+        <div class="card-head"><h2>Add-ons</h2></div>
+        <p class="muted small">Extra items the built-in profile can also close. They are off until you tick them. Changes apply after Save.</p>
+        <div id="addons-body"></div>
+      </div>
+      <div class="card" id="report-card" hidden>
+        <div class="card-head"><h2>Last time</h2></div>
+        <div id="last-report"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ADVANCED -->
+<section class="screen" id="screen-advanced" aria-label="Advanced" hidden>
+  <div class="banner info ro-banner" id="ro-banner" hidden>
+    <span id="ro-text"></span>
+    <button type="button" id="ro-dup" class="primary">Duplicate</button>
+  </div>
+  <div class="adv-top"><div class="adv-tabs" id="tabs" role="group" aria-label="Item type"></div>
+    <div class="adv-actions"><button type="button" id="rescan">Rescan</button>
+      <button type="button" id="startup-btn" title="Startup, service and task changes you made here, with Undo">Changes</button></div></div>
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="Search by name or path" aria-label="Search" autocomplete="off">
+    <label class="inline"><span class="muted small">Sort</span>
       <select id="sort">
         <option value="ram">RAM (largest first)</option>
         <option value="risk">Risk (safest first)</option>
         <option value="name">Name</option>
-      </select>
+      </select></label>
+    <label class="inline"><input type="checkbox" id="only-selected"> Selected only</label>
+    <label class="inline"><input type="checkbox" id="hide-ms" checked> Hide Microsoft tasks</label>
+    <span class="spacer"></span>
+    <span class="muted small" id="sel-summary"></span>
+  </div>
+  <div class="note" id="kind-note" hidden></div>
+  <div class="note admin-note" id="admin-note" hidden></div>
+  <div class="line head" aria-hidden="true"><span></span><span>Name</span><span class="r">RAM</span><span>State</span><span>Risk</span><span>Method</span><span></span><span></span></div>
+  <div id="list"></div>
+  <p class="muted small scanline" id="scan-status"></p>
+</section>
+
+<!-- PROFILES -->
+<section class="screen" id="screen-profiles" aria-label="Profiles" hidden>
+  <div class="page">
+    <div class="page-head">
+      <h2>Profiles</h2>
+      <span class="spacer"></span>
+      <button type="button" id="prof-new">New empty profile</button>
+      <button type="button" id="prof-import">Import profile</button>
     </div>
-    <div class="note" id="kind-note" hidden></div>
-    <div class="note admin-note" id="admin-note" hidden></div>
-    <div class="line head"><span></span><span>Name</span><span style="text-align:right">RAM</span><span>State</span><span>Risk</span><span>Method</span><span></span><span></span></div>
-    <div id="list"></div>
-  </section>
-</div>
+    <p class="muted">Built-in profiles are read-only. Duplicate one to make your own copy you can change in Advanced.</p>
+    <div id="prof-list"></div>
+  </div>
+</section>
+
+<!-- SETTINGS -->
+<section class="screen" id="screen-settings" aria-label="Settings" hidden>
+  <div class="page">
+    <div class="page-head"><h2>Settings</h2><span class="spacer"></span>
+      <span class="muted small">Changes here apply when you press Save, except where marked.</span></div>
+
+    <div class="card">
+      <div class="card-head"><h3>Hotkey</h3></div>
+      <div class="field"><label for="set-hotkey">Turn on / off</label>
+        <div class="ctl"><input type="text" id="set-hotkey" spellcheck="false" placeholder="Ctrl+Alt+R">
+          <button type="button" id="set-record">Record</button></div></div>
+      <div class="status-line" id="hotkey-status" aria-live="polite"></div>
+      <div class="status-line muted" id="set-msg" aria-live="polite"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Look and behaviour</h3></div>
+      <div class="field"><label for="set-theme">Theme</label>
+        <div class="ctl"><select id="set-theme">
+          <option value="dark">Dark</option><option value="light">Light</option><option value="system">Follow Windows</option>
+        </select></div></div>
+      <div class="field"><label for="set-grace">Wait before force-closing</label>
+        <div class="ctl"><input type="number" id="set-grace" min="0" max="300" step="1"> <span class="muted small">seconds. How long an app gets to close by itself (Close method) before it is forced.</span></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Start with Windows</h3><span class="tag-now">applies immediately</span></div>
+      <div id="auto-body"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Updates</h3></div>
+      <div id="upd-body"></div>
+      <div class="field"><label for="set-autocheck">Check automatically</label>
+        <div class="ctl"><label class="switch"><input type="checkbox" role="switch" id="set-autocheck"><span class="track"></span><span class="sw-text" id="set-autocheck-t"></span></label></div></div>
+      <div class="field"><label for="set-autodl">Download automatically</label>
+        <div class="ctl"><label class="switch"><input type="checkbox" role="switch" id="set-autodl"><span class="track"></span><span class="sw-text" id="set-autodl-t"></span></label>
+          <span class="muted small">Installing always asks you first.</span></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Backup</h3></div>
+      <p class="muted small">Export or import the whole configuration (hotkey, theme, all profiles). Import loads the file as unsaved changes.</p>
+      <div class="btn-row"><button type="button" id="set-export">Export settings...</button><button type="button" id="set-import">Import settings...</button></div>
+      <p class="muted small" id="set-info"></p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Help and about</h3></div>
+      <div class="btn-row"><button type="button" id="tour-replay">Show tutorial again</button></div>
+      <p class="muted small" id="about-text"></p>
+    </div>
+
+    <div class="card danger-zone">
+      <div class="btn-row"><button type="button" id="quit-btn" class="danger">Quit HoldMyRAM</button>
+        <span class="muted small">Restores anything it closed, then removes the tray icon.</span></div>
+    </div>
+  </div>
+</section>
+</main>
 
 <div class="toast" id="toast" role="status" hidden>
   <span id="toast-text"></span>
-  <button id="toast-undo" class="linkbtn">Undo</button>
-  <button id="toast-close" class="linkbtn" aria-label="Dismiss">&times;</button>
+  <button type="button" id="toast-undo" class="linkbtn">Undo</button>
+  <button type="button" id="toast-close" class="linkbtn" aria-label="Dismiss">&times;</button>
 </div>
 
-<dialog id="startup-dlg" class="wide">
-  <h2>Changes</h2>
+<dialog id="startup-dlg" class="wide" aria-labelledby="startup-h">
+  <h2 id="startup-h">Changes</h2>
   <p class="muted small">Lasting changes made here: what starts at login, service start types, and scheduled tasks turned on or off. Undo sets the item back; nothing is deleted. These are separate from the RAM toggle and hotkey.</p>
   <div id="startup-list"></div>
-  <div class="buttons"><button id="startup-close" class="primary">Done</button></div>
+  <div class="buttons"><button type="button" id="startup-close" class="primary">Done</button></div>
 </dialog>
 
-<dialog id="chg-dlg">
+<dialog id="chg-dlg" aria-labelledby="chg-title">
   <h2 id="chg-title"></h2>
   <div class="body" id="chg-body"></div>
   <div class="field" id="chg-field"><label for="chg-choice">Start type</label>
@@ -89,36 +216,31 @@
     </select></div></div>
   <div class="warn-text small" id="chg-warn" hidden></div>
   <div class="small bad-text" id="chg-err" hidden></div>
-  <div class="buttons"><button id="chg-cancel">Cancel</button><button id="chg-ok" class="primary">Apply</button></div>
+  <div class="buttons"><button type="button" id="chg-cancel">Cancel</button><button type="button" id="chg-ok" class="primary">Apply</button></div>
 </dialog>
 
-<dialog id="dlg"><h2 id="dlg-title"></h2><div class="body" id="dlg-body"></div><div class="buttons" id="dlg-buttons"></div></dialog>
+<dialog id="dlg" aria-labelledby="dlg-title"><h2 id="dlg-title"></h2><div class="body" id="dlg-body"></div><div class="buttons" id="dlg-buttons"></div></dialog>
 
-<dialog id="settings" class="wide">
-  <h2>Settings</h2>
-  <div class="field"><label for="set-hotkey">Hotkey</label>
-    <div class="ctl"><input type="text" id="set-hotkey" spellcheck="false" placeholder="Ctrl+Alt+R">
-      <button id="set-record">Record</button></div></div>
-  <div class="status-line" id="hotkey-status"></div>
-  <div class="field"><label for="set-theme">Theme</label>
-    <div class="ctl"><select id="set-theme">
-      <option value="dark">Dark</option><option value="light">Light</option><option value="system">Follow Windows</option>
-    </select></div></div>
-  <div class="field"><label for="set-grace">Grace seconds</label>
-    <div class="ctl"><input type="number" id="set-grace" min="0" max="300" step="1">
-      <span class="muted small">Wait after asking an app to close, before forcing it (Close method).</span></div></div>
-  <div class="field"><label for="set-path">Config file</label>
-    <div class="ctl"><input type="text" id="set-path" spellcheck="false">
-      <button id="set-export">Export</button><button id="set-import">Import</button></div></div>
-  <div class="status-line muted" id="set-msg"></div>
-  <p class="muted small" id="set-info"></p>
-  <p class="muted small">Changes apply to the hotkey and the toggle after you press Save. Import loads a file as unsaved changes.</p>
-  <div class="buttons" style="display:flex;gap:8px;justify-content:space-between">
-    <button id="quit-btn" class="danger">Quit HoldMyRAM</button>
-    <button id="settings-close" class="primary">Done</button>
+<dialog id="tour" class="tour" aria-labelledby="tour-title">
+  <div class="tour-art" id="tour-art" aria-hidden="true"></div>
+  <p class="muted small tour-step" id="tour-step"></p>
+  <h2 id="tour-title"></h2>
+  <div class="tour-body" id="tour-body" aria-live="polite"></div>
+  <div class="tour-dots" id="tour-dots" aria-hidden="true"></div>
+  <div class="buttons tour-btns">
+    <button type="button" id="tour-skip" class="linkbtn">Skip</button>
+    <span class="spacer"></span>
+    <button type="button" id="tour-back">Back</button>
+    <button type="button" id="tour-next" class="primary">Next</button>
   </div>
 </dialog>
 
+<script src="core.js"></script>
+<script src="advanced.js"></script>
+<script src="home.js"></script>
+<script src="profiles.js"></script>
+<script src="settings.js"></script>
+<script src="tutorial.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
