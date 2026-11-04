@@ -1,7 +1,10 @@
-# Agent and design docs (local only)
-CLAUDE.md
-AGENTS.md
+# Assistant, agent and design notes (local only, never published)
 .claude/
+.claude.json
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+.mcp.json
 docs/
 
 # Rust / Tauri
@@ -10,9 +13,18 @@ docs/
 **/*.rs.bk
 crates/app/gen/
 
-# Node
-node_modules/
+# Release output (built by scripts/package.ps1, published with gh)
 dist/
+
+# Node (not used, kept out just in case)
+node_modules/
+
+# Vendored crate extras the build does not use (licence files and src/ stay)
+vendor/**/.cargo-ok
+vendor/**/.cargo_vcs_info.json
+vendor/**/Cargo.toml.orig
+vendor/**/Cargo.lock
+vendor/**/README.md
 
 # OS / editor
 .DS_Store
@@ -20,6 +32,9 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Local config and logs
+# Local config, logs and scratch
 *.log
+*.tmp
+*.bak
+*.bad
 .env
