@@ -5,7 +5,7 @@
 const KIND_GROUP = { process: 'Apps and background programs', service: 'Services', task: 'Scheduled tasks', startup: 'Startup items' };
 const KIND_ORDER = ['process', 'service', 'task', 'startup'];
 const SKIP_TEXT = {
-  not_present: 'not on this PC', not_running: 'not running', disabled: 'already disabled',
+  not_present: 'not open or not on this PC', not_running: 'not running', disabled: 'already disabled',
   foreground: 'in use right now', self_process: 'HoldMyRAM itself', protected: 'protected system items',
   never_touch: 'on the never-touch list', dangerous: 'rated Dangerous', invalid: 'not valid',
   not_scanned: 'not scanned yet', condition_not_met: 'rule does not apply to this PC',
@@ -311,12 +311,16 @@ function renderStatus() {
     : empty ? 'This profile is empty. Choose a profile, or tick items in Advanced.' : '';
 
   const hk = $('hs-hotkey');
-  hk.replaceChildren(document.createTextNode('Hotkey: '));
+  // Saved mode, not the draft: it describes what the hotkey does right now.
+  const savedCfg = S.state && S.state.config;
   const parts = hotkeyParts();
+  const holdMs = savedCfg && savedCfg.hotkey_mode === 'hold' && parts.length ? clampHold(savedCfg.hold_ms) : 0;
+  hk.replaceChildren(document.createTextNode(holdMs ? 'Hold ' : 'Hotkey: '));
   parts.forEach((p, i) => {
     if (i) hk.appendChild(document.createTextNode(' + '));
     hk.appendChild(el('kbd', '', p));
   });
+  if (holdMs) hk.appendChild(document.createTextNode(' for ' + fmtSec(holdMs) + ' s'));
   if (!parts.length) hk.appendChild(document.createTextNode('not set'));
   if (st.hotkey && st.hotkey.error) hk.appendChild(el('span', 'bad-text small', '  (' + st.hotkey.error + ')'));
   if (empty) hk.appendChild(el('span', 'small muted', '  Choose a profile or tick items first.'));

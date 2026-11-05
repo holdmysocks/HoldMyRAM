@@ -28,7 +28,7 @@ const REASON_TEXT = {
   already_done: 'it was already in the wanted state',
   changed_by_user: 'you changed it afterwards, so it was left as you set it',
   ambiguous: 'it was selected twice with different methods',
-  not_present: 'it is not on this PC',
+  not_present: 'it is not open or not on this PC',
   not_running: 'it is not running',
   disabled: 'it is already disabled',
   dangerous: 'it is rated Dangerous, so it is never added automatically',
@@ -177,6 +177,14 @@ function applyTheme() {
   document.documentElement.setAttribute('data-theme', ['dark', 'light', 'system'].includes(t) ? t : 'dark');
 }
 
+/** Hold time in ms: whole number, 200..3000, default 700. */
+function clampHold(v) {
+  v = parseInt(v, 10);
+  if (!Number.isFinite(v)) return 700;
+  return Math.min(3000, Math.max(200, v));
+}
+const fmtSec = ms => (ms / 1000).toFixed(1);
+
 function setConfig(cfg, markSaved) {
   S.cfg = cfg;
   cfg.selections = cfg.selections || [];
@@ -184,6 +192,12 @@ function setConfig(cfg, markSaved) {
   if (cfg.active_profile === undefined) cfg.active_profile = null;
   cfg.recommended_addons = cfg.recommended_addons || [];
   cfg.recommended_addon_groups = cfg.recommended_addon_groups || [];
+  // Older configs lack the hotkey-mode and notification fields: treat missing as the defaults.
+  if (cfg.hotkey_mode !== 'hold') cfg.hotkey_mode = 'tap';
+  cfg.hold_ms = clampHold(cfg.hold_ms);
+  if (!['toast', 'popup', 'off'].includes(cfg.notify_style)) cfg.notify_style = 'toast';
+  cfg.notify_sound = cfg.notify_sound === true;
+  if (!['speech', 'clicks', 'chimes', 'unlock', 'proximity', 'device'].includes(cfg.notify_sound_set)) cfg.notify_sound_set = 'speech';
   const fix = s => { if (!s.kind) s.kind = 'process'; };
   cfg.selections.forEach(fix);
   cfg.profiles.forEach(p => (p.selections = p.selections || []).forEach(fix));

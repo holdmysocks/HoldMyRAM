@@ -5,7 +5,7 @@ startup items, scheduled tasks and services it may close, see a risk rating and
 a short explanation for each, and toggle the set with a global hotkey. Toggling
 off restores what was closed.
 
-Status: early (v0.1.1). Unsigned and not an installer. Free software under the
+Status: early (v0.1.2). Unsigned and not an installer. Free software under the
 GNU General Public License, version 3 (see `LICENSE`), with no warranty.
 
 ## Requirements
@@ -40,7 +40,10 @@ GNU General Public License, version 3 (see `LICENSE`), with no warranty.
 Quit from the tray icon, delete the folder, and optionally delete the two data
 folders above and the `HoldMyRAM` value under
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` if you ticked
-Settings > Start HoldMyRAM when I sign in (off by default).
+Settings > Start HoldMyRAM when I sign in (off by default). If you used Windows
+notifications (Settings > Notifications), also delete the key
+`HKCU\Software\Classes\AppUserModelId\HoldMyRAM` and the file
+`%LOCALAPPDATA%\HoldMyRAM\notify-icon.png`.
 
 ## Updates
 

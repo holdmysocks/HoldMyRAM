@@ -145,6 +145,56 @@
           <button type="button" id="set-record">Record</button></div></div>
       <div class="status-line" id="hotkey-status" aria-live="polite"></div>
       <div class="status-line muted" id="set-msg" aria-live="polite"></div>
+      <fieldset class="optgroup">
+        <legend>How the hotkey works</legend>
+        <label class="opt"><input type="radio" name="hk-mode" value="tap" id="hk-mode-tap">
+          <span><strong>Tap</strong><span class="muted small">Press the keys once to turn on or off (default).</span></span></label>
+        <label class="opt"><input type="radio" name="hk-mode" value="hold" id="hk-mode-hold">
+          <span><strong>Hold to confirm</strong><span class="muted small">Keep the keys held for about <span id="hold-inline">0.7</span> seconds, which prevents accidental presses.</span></span></label>
+        <div class="field hold-field" id="hold-field">
+          <label for="set-hold">Hold time</label>
+          <div class="ctl"><input type="range" id="set-hold" min="200" max="3000" step="100" value="700" aria-describedby="hold-val">
+            <output id="hold-val" for="set-hold">0.7 s</output>
+            <span class="muted small">Default is 0.7 s.</span></div>
+        </div>
+        <p class="muted small">Holding applies to the keyboard shortcut only; the tray menu and the window button still act at once.</p>
+        <p class="small warn-text" id="hold-note" role="status" hidden></p>
+      </fieldset>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Notifications</h3></div>
+      <p class="muted small">How HoldMyRAM tells you it turned on or off.</p>
+      <fieldset class="optgroup">
+        <legend>Show a message as</legend>
+        <label class="opt"><input type="radio" name="nt-style" value="toast" id="nt-toast">
+          <span><strong>Windows notification (toast)</strong><span class="muted small">A normal system notification. It may not show over full-screen games or while Focus Assist is on.</span></span></label>
+        <label class="opt"><input type="radio" name="nt-style" value="popup" id="nt-popup">
+          <span><strong>Small pop-up</strong><span class="muted small">Our own small message that appears for about two seconds, even over borderless games, and never takes focus.</span></span></label>
+        <label class="opt"><input type="radio" name="nt-style" value="off" id="nt-off">
+          <span><strong>Off</strong><span class="muted small">No message. The tray icon still changes.</span></span></label>
+      </fieldset>
+      <p class="muted small" id="toast-na" hidden>Windows toasts are not available here. Choose the small pop-up instead.</p>
+      <div class="field"><label for="set-sound">Sound</label>
+        <div class="ctl"><label class="switch"><input type="checkbox" role="switch" id="set-sound"><span class="track"></span><span class="sw-text">Play a short sound</span></label></div></div>
+      <div class="field snd-field"><label for="set-sndset">Sound set</label>
+        <div class="ctl"><select id="set-sndset">
+          <option value="speech">Speech (rising and falling tones)</option>
+          <option value="clicks">Soft clicks</option>
+          <option value="chimes">Chimes</option>
+          <option value="unlock">Unlock and pop-up</option>
+          <option value="proximity">Proximity and balloon</option>
+          <option value="device">Windows device sounds (plug and unplug)</option>
+        </select>
+        <div class="btn-row"><button type="button" id="snd-prev-on">Hear turn on</button>
+        <button type="button" id="snd-prev-off">Hear turn off</button></div></div></div>
+      <div class="status-line muted" id="snd-hint" hidden></div>
+      <div class="status-line muted" id="snd-msg" role="status" aria-live="polite"></div>
+      <div class="field"><label id="nt-test-l">Show a test</label>
+        <div class="ctl" role="group" aria-labelledby="nt-test-l">
+          <button type="button" id="nt-test-on">Test: turned on</button>
+          <button type="button" id="nt-test-off">Test: turned off</button></div></div>
+      <div class="status-line muted" id="nt-msg" role="status" aria-live="polite"></div>
     </div>
 
     <div class="card">

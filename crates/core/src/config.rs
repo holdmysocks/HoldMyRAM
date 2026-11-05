@@ -23,6 +23,82 @@ pub enum Theme {
     System,
 }
 
+/// How the global hotkey triggers the toggle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HotkeyMode {
+    /// A press toggles at once.
+    #[default]
+    Tap,
+    /// The key has to stay down for `hold_ms` before the toggle runs.
+    Hold,
+}
+
+/// How HoldMyRAM tells the user that the toggle turned on or off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NotifyStyle {
+    /// A Windows toast notification.
+    #[default]
+    Toast,
+    /// HoldMyRAM's own small pop-up above the taskbar.
+    Popup,
+    Off,
+}
+
+/// Which pair of Windows sounds marks turning on and off (when `notify_sound` is on).
+/// Only a name is stored; the fixed file names live in the app's notification child, so
+/// no path ever comes from the config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NotifySoundSet {
+    /// Speech On / Speech Off.
+    #[default]
+    Speech,
+    /// Windows Navigation Start / Windows Information Bar.
+    Clicks,
+    /// chimes / chord.
+    Chimes,
+    /// Windows Unlock / Windows Pop-up Blocked.
+    Unlock,
+    /// Windows Proximity Notification / Windows Balloon.
+    Proximity,
+    /// The Device Connect / Device Disconnect system sounds (the original behaviour).
+    Device,
+}
+
+impl NotifySoundSet {
+    pub const ALL: [NotifySoundSet; 6] = [
+        NotifySoundSet::Speech,
+        NotifySoundSet::Clicks,
+        NotifySoundSet::Chimes,
+        NotifySoundSet::Unlock,
+        NotifySoundSet::Proximity,
+        NotifySoundSet::Device,
+    ];
+
+    /// The lowercase name used in the config and the UI.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NotifySoundSet::Speech => "speech",
+            NotifySoundSet::Clicks => "clicks",
+            NotifySoundSet::Chimes => "chimes",
+            NotifySoundSet::Unlock => "unlock",
+            NotifySoundSet::Proximity => "proximity",
+            NotifySoundSet::Device => "device",
+        }
+    }
+
+    /// Exact (case-sensitive) name to set; None for anything else.
+    pub fn from_name(s: &str) -> Option<NotifySoundSet> {
+        Self::ALL.into_iter().find(|v| v.as_str() == s)
+    }
+}
+
+pub const DEFAULT_HOLD_MS: u32 = 700;
+pub const MIN_HOLD_MS: u32 = 200;
+pub const MAX_HOLD_MS: u32 = 3000;
+
 /// A user profile (editable). The built-in Recommended profiles are not stored here; see
 /// `profiles::Builtin`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -65,10 +141,70 @@ pub struct Config {
     /// click. Missing in old files: true.
     #[serde(default = "yes")]
     pub auto_download_updates: bool,
+    /// "tap" (default) or "hold" (hold-to-confirm).
+    #[serde(default)]
+    pub hotkey_mode: HotkeyMode,
+    /// Hold-to-confirm duration, MIN_HOLD_MS..=MAX_HOLD_MS.
+    #[serde(default = "default_hold_ms")]
+    pub hold_ms: u32,
+    /// "toast" (default), "popup" or "off".
+    #[serde(default)]
+    pub notify_style: NotifyStyle,
+    /// A short sound with the notification (different for on and off).
+    #[serde(default)]
+    pub notify_sound: bool,
+    /// "speech" (default), "clicks", "chimes", "unlock", "proximity" or "device".
+    #[serde(default)]
+    pub notify_sound_set: NotifySoundSet,
 }
 
 fn yes() -> bool {
     true
+}
+
+fn default_hold_ms() -> u32 {
+    DEFAULT_HOLD_MS
+}
+
+/// Keys whose values a hand edit (or a newer version) may have left unusable. On load
+/// they are reset to a usable value with a note instead of discarding the whole file.
+fn repair_lenient_keys(raw: &mut toml::Table) -> Vec<String> {
+    let mut notes = Vec::new();
+    let mut fix_enum = |key: &str, allowed: &[&str], default: &str| {
+        let ok = match raw.get(key) {
+            None => return,
+            Some(toml::Value::String(s)) => allowed.contains(&s.as_str()),
+            Some(_) => false,
+        };
+        if !ok {
+            notes.push(format!("{key} {} is not one of {}; using {default:?}", raw[key], allowed.join(", ")));
+            raw.insert(key.to_string(), toml::Value::String(default.to_string()));
+        }
+    };
+    fix_enum("hotkey_mode", &["tap", "hold"], "tap");
+    fix_enum("notify_style", &["toast", "popup", "off"], "toast");
+    let sets: Vec<&str> = NotifySoundSet::ALL.iter().map(|s| s.as_str()).collect();
+    fix_enum("notify_sound_set", &sets, NotifySoundSet::default().as_str());
+    if let Some(v) = raw.get("hold_ms") {
+        let fixed = match v {
+            toml::Value::Integer(i) => {
+                let c = (*i).clamp(MIN_HOLD_MS as i64, MAX_HOLD_MS as i64);
+                (c != *i).then_some(c)
+            }
+            _ => Some(DEFAULT_HOLD_MS as i64),
+        };
+        if let Some(c) = fixed {
+            notes.push(format!("hold_ms {v} is outside {MIN_HOLD_MS}..={MAX_HOLD_MS}; using {c}"));
+            raw.insert("hold_ms".into(), toml::Value::Integer(c));
+        }
+    }
+    if let Some(v) = raw.get("notify_sound") {
+        if !v.is_bool() {
+            notes.push(format!("notify_sound {v} is not true or false; using false"));
+            raw.insert("notify_sound".into(), toml::Value::Boolean(false));
+        }
+    }
+    notes
 }
 
 impl Default for Config {
@@ -85,6 +221,11 @@ impl Default for Config {
             recommended_addon_groups: Vec::new(),
             auto_check_updates: true,
             auto_download_updates: true,
+            hotkey_mode: HotkeyMode::Tap,
+            hold_ms: DEFAULT_HOLD_MS,
+            notify_style: NotifyStyle::Toast,
+            notify_sound: false,
+            notify_sound_set: NotifySoundSet::Speech,
         }
     }
 }
@@ -245,6 +386,12 @@ impl Config {
                 self.grace_seconds
             )));
         }
+        if !(MIN_HOLD_MS..=MAX_HOLD_MS).contains(&self.hold_ms) {
+            return Err(ConfigError::Invalid(format!(
+                "hold_ms {} must be between {MIN_HOLD_MS} and {MAX_HOLD_MS}",
+                self.hold_ms
+            )));
+        }
         validate_selections(&self.selections, "selections", blocked_too)?;
         for a in &self.recommended_addons {
             if a.name.trim().is_empty() || a.name.len() > 1024 || a.name.contains('\0') {
@@ -385,11 +532,18 @@ impl Config {
         };
         // Lenient about never-touch entries (dropped with a warning) so that a blocked
         // service never costs the user the whole config; strict about everything else.
+        // Also lenient about the hotkey-mode and notification keys (reset with a note).
         let parsed = toml::from_str::<toml::Table>(&text)
-            .and_then(|raw| toml::from_str::<Config>(&text).map(|c| (raw, c)))
             .map_err(|e| ConfigError::Parse(e.to_string()))
-            .and_then(|(raw, mut c)| {
-                let notes = c.migrate(&raw);
+            .and_then(|mut raw| {
+                let repaired = repair_lenient_keys(&mut raw);
+                toml::Value::Table(raw.clone())
+                    .try_into::<Config>()
+                    .map(|c| (raw, c, repaired))
+                    .map_err(|e| ConfigError::Parse(e.to_string()))
+            })
+            .and_then(|(raw, mut c, mut notes)| {
+                notes.extend(c.migrate(&raw));
                 c.validate_inner(false).map(|_| (c, notes))
             });
         match parsed {
@@ -628,7 +782,184 @@ mod tests {
             recommended_addon_groups: vec!["optin".into()],
             auto_check_updates: false,
             auto_download_updates: true,
+            hotkey_mode: HotkeyMode::Hold,
+            hold_ms: 1200,
+            notify_style: NotifyStyle::Popup,
+            notify_sound: true,
+            notify_sound_set: NotifySoundSet::Chimes,
         }
+    }
+
+    #[test]
+    fn hotkey_mode_and_notify_defaults() {
+        let c = Config::default();
+        assert_eq!(c.hotkey_mode, HotkeyMode::Tap);
+        assert_eq!(c.hold_ms, 700);
+        assert_eq!(c.notify_style, NotifyStyle::Toast);
+        assert!(!c.notify_sound);
+        // An old file without the keys gets the same defaults, silently.
+        let dir = temp_dir();
+        let p = dir.join("config.toml");
+        fs::write(&p, "hotkey = \"Ctrl+Alt+R\"\ntheme = \"dark\"\ngrace_seconds = 5\n[[selections]]\nname = \"a.exe\"\n").unwrap();
+        let l = Config::load_from(&p);
+        assert!(l.warning.is_none(), "{:?}", l.warning);
+        assert_eq!(
+            (l.config.hotkey_mode, l.config.hold_ms, l.config.notify_style, l.config.notify_sound),
+            (HotkeyMode::Tap, 700, NotifyStyle::Toast, false)
+        );
+        // Shapes on disk.
+        let text = c.to_toml().unwrap();
+        for k in ["hotkey_mode = \"tap\"", "hold_ms = 700", "notify_style = \"toast\"", "notify_sound = false"] {
+            assert!(text.contains(k), "{k} missing in {text}");
+        }
+        // JSON shape (what the window sends to save_config).
+        let j = serde_json::to_value(&c).unwrap();
+        assert_eq!(j["hotkey_mode"], "tap");
+        assert_eq!(j["hold_ms"], 700);
+        assert_eq!(j["notify_style"], "toast");
+        assert_eq!(j["notify_sound"], false);
+        let mut j2 = j.clone();
+        j2["hotkey_mode"] = "hold".into();
+        j2["notify_style"] = "off".into();
+        let back: Config = serde_json::from_value(j2).unwrap();
+        assert_eq!((back.hotkey_mode, back.notify_style), (HotkeyMode::Hold, NotifyStyle::Off));
+        // Unknown values from the window are refused, not guessed.
+        let mut j3 = j.clone();
+        j3["notify_style"] = "banner".into();
+        assert!(serde_json::from_value::<Config>(j3).is_err());
+    }
+
+    #[test]
+    fn notify_sound_set_default_round_trip_and_strictness() {
+        // Default.
+        let c = Config::default();
+        assert_eq!(c.notify_sound_set, NotifySoundSet::Speech);
+        assert!(c.to_toml().unwrap().contains("notify_sound_set = \"speech\""));
+        assert_eq!(serde_json::to_value(&c).unwrap()["notify_sound_set"], "speech");
+        // Names.
+        for s in NotifySoundSet::ALL {
+            assert_eq!(NotifySoundSet::from_name(s.as_str()), Some(s));
+            assert_eq!(serde_json::to_value(s).unwrap(), s.as_str());
+        }
+        assert_eq!(NotifySoundSet::from_name("Speech"), None);
+        assert_eq!(NotifySoundSet::from_name(""), None);
+        // TOML round trip for every set.
+        let dir = temp_dir();
+        let p = dir.join("config.toml");
+        for s in NotifySoundSet::ALL {
+            let mut c = sample();
+            c.notify_sound_set = s;
+            c.save_to(&p).unwrap();
+            let l = Config::load_from(&p);
+            assert!(l.warning.is_none(), "{:?}", l.warning);
+            assert_eq!(l.config, c);
+            assert_eq!(Config::import(&p).unwrap().notify_sound_set, s);
+        }
+        // JSON round trip (what the window sends to save_config).
+        for s in NotifySoundSet::ALL {
+            let mut j = serde_json::to_value(Config::default()).unwrap();
+            j["notify_sound_set"] = s.as_str().into();
+            assert_eq!(serde_json::from_value::<Config>(j).unwrap().notify_sound_set, s);
+        }
+        // A window that does not send the field yet: default.
+        let mut j = serde_json::to_value(Config::default()).unwrap();
+        j.as_object_mut().unwrap().remove("notify_sound_set");
+        assert_eq!(serde_json::from_value::<Config>(j).unwrap().notify_sound_set, NotifySoundSet::Speech);
+        // Old file without the key: default, silently.
+        fs::write(&p, "theme = \"light\"\nnotify_sound = true\n").unwrap();
+        let l = Config::load_from(&p);
+        assert!(l.warning.is_none(), "{:?}", l.warning);
+        assert_eq!(l.config.notify_sound_set, NotifySoundSet::Speech);
+        assert!(l.config.notify_sound);
+        // Unknown values, wrong types and paths are refused on save (JSON) and import.
+        for bad in [
+            serde_json::json!("beep"),
+            serde_json::json!("SPEECH"),
+            serde_json::json!(r"C:\Windows\Media\chimes.wav"),
+            serde_json::json!("..\\x.wav"),
+            serde_json::json!(3),
+            serde_json::json!(true),
+            serde_json::json!(null),
+        ] {
+            let mut j = serde_json::to_value(Config::default()).unwrap();
+            j["notify_sound_set"] = bad.clone();
+            assert!(serde_json::from_value::<Config>(j).is_err(), "accepted {bad}");
+        }
+        for bad in ["notify_sound_set = \"beep\"\n", "notify_sound_set = 'C:\\x.wav'\n", "notify_sound_set = 1\n"] {
+            fs::write(&p, bad).unwrap();
+            assert!(Config::import(&p).is_err(), "import accepted {bad}");
+            assert!(Config::from_toml(bad).is_err());
+        }
+    }
+
+    #[test]
+    fn bad_notify_sound_set_on_disk_is_repaired() {
+        let dir = temp_dir();
+        let p = dir.join("config.toml");
+        for bad in ["\"beep\"", "\"C:\\\\Windows\\\\Media\\\\chimes.wav\"", "7", "[\"speech\"]"] {
+            fs::write(&p, format!("theme = \"light\"\nnotify_sound = true\nnotify_sound_set = {bad}\n[[selections]]\nname = \"a.exe\"\n")).unwrap();
+            let l = Config::load_from(&p);
+            assert_eq!(l.config.notify_sound_set, NotifySoundSet::Speech, "{bad}");
+            assert_eq!(l.config.theme, Theme::Light);
+            assert!(l.config.notify_sound);
+            assert_eq!(l.config.selections.len(), 1);
+            let w = l.warning.unwrap_or_default();
+            assert!(w.contains("notify_sound_set"), "{bad}: {w}");
+            assert!(!dir.join("config.toml.bad").exists());
+        }
+        fs::write(&p, "notify_sound_set = \"unlock\"\n").unwrap();
+        let l = Config::load_from(&p);
+        assert!(l.warning.is_none());
+        assert_eq!(l.config.notify_sound_set, NotifySoundSet::Unlock);
+    }
+
+    #[test]
+    fn hold_ms_validated_on_save() {
+        let dir = temp_dir();
+        let p = dir.join("config.toml");
+        for ok in [MIN_HOLD_MS, 700, MAX_HOLD_MS] {
+            let mut c = Config::default();
+            c.hold_ms = ok;
+            c.save_to(&p).unwrap_or_else(|e| panic!("{ok}: {e}"));
+            assert_eq!(Config::load_from(&p).config.hold_ms, ok);
+        }
+        for bad in [0, MIN_HOLD_MS - 1, MAX_HOLD_MS + 1, u32::MAX] {
+            let mut c = Config::default();
+            c.hold_ms = bad;
+            let e = c.save_to(&p).unwrap_err().to_string();
+            assert!(e.contains("hold_ms"), "{e}");
+        }
+        assert_eq!(Config::load_from(&p).config.hold_ms, MAX_HOLD_MS, "file untouched by refused saves");
+        // Import is strict.
+        fs::write(&p, "hold_ms = 50\n").unwrap();
+        assert!(Config::import(&p).is_err());
+    }
+
+    #[test]
+    fn bad_notify_keys_on_disk_are_repaired_not_the_whole_config() {
+        let dir = temp_dir();
+        let p = dir.join("config.toml");
+        fs::write(
+            &p,
+            "theme = \"light\"\nhotkey_mode = \"push\"\nhold_ms = 99999\nnotify_style = 3\nnotify_sound = \"yes\"\n\
+             [[selections]]\nname = \"a.exe\"\n",
+        )
+        .unwrap();
+        let l = Config::load_from(&p);
+        assert_eq!(l.config.theme, Theme::Light);
+        assert_eq!(l.config.selections.len(), 1);
+        assert_eq!(l.config.hotkey_mode, HotkeyMode::Tap);
+        assert_eq!(l.config.hold_ms, MAX_HOLD_MS);
+        assert_eq!(l.config.notify_style, NotifyStyle::Toast);
+        assert!(!l.config.notify_sound);
+        let w = l.warning.unwrap();
+        for k in ["hotkey_mode", "hold_ms", "notify_style", "notify_sound"] {
+            assert!(w.contains(k), "{k} not in {w}");
+        }
+        assert!(!dir.join("config.toml.bad").exists());
+        fs::write(&p, "hold_ms = -5\nhotkey_mode = \"hold\"\n").unwrap();
+        let l = Config::load_from(&p);
+        assert_eq!((l.config.hold_ms, l.config.hotkey_mode), (MIN_HOLD_MS, HotkeyMode::Hold));
     }
 
     #[test]

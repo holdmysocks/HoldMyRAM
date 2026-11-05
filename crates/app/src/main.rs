@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod hold;
+mod notify;
+mod notify_child;
 mod profile_cmds;
 mod system_cmds;
 mod update_cmds;
@@ -10,7 +13,7 @@ use holdmyram_core::admin::handler::AdminBackend;
 use holdmyram_core::admin::proto::{AdminError, ErrorCode, StartChoice};
 use holdmyram_core::admin::rules;
 use holdmyram_core::admin::win::WinBackend;
-use holdmyram_core::config::{self, admin_block_reason, Config, DEFAULT_HOTKEY};
+use holdmyram_core::config::{self, admin_block_reason, Config, HotkeyMode, DEFAULT_HOTKEY};
 use holdmyram_core::journal;
 use holdmyram_core::risk::{Kind, Risk, RiskDb};
 use holdmyram_core::scan::{scan_all, ScanItem};
@@ -40,6 +43,8 @@ static ACTIVE: AtomicBool = AtomicBool::new(false);
 static BUSY: AtomicBool = AtomicBool::new(false);
 /// A quit is already in progress (waiting for a toggle and/or restoring).
 static QUITTING: AtomicBool = AtomicBool::new(false);
+/// A hold-to-confirm watcher thread is running; further presses are ignored.
+static HOLD_WATCH: AtomicBool = AtomicBool::new(false);
 /// How long a quit waits for a running toggle (Close grace period + restore) to finish.
 const QUIT_WAIT: Duration = Duration::from_secs(120);
 
@@ -363,6 +368,28 @@ struct HotkeyStatus {
     /// What is actually registered ("" if nothing).
     active: String,
     error: Option<String>,
+    /// How a press of the registered hotkey acts right now: "tap" or "hold". "tap" when
+    /// hold mode is set but cannot follow the key (see `hold_note`).
+    mode: String,
+    /// Hold duration in effect (ms), from the saved config.
+    hold_ms: u32,
+    /// Hold mode was asked for but the hotkey works on a tap; why.
+    hold_note: Option<String>,
+}
+
+/// The hotkey status with the hold fields filled from the current config and shortcut.
+fn hotkey_status(r: &Runtime) -> HotkeyStatus {
+    let mut h = r.hotkey.clone();
+    h.hold_ms = r.config.hold_ms;
+    match hold::plan(r.config.hotkey_mode == HotkeyMode::Hold, r.config.hold_ms, r.registered.as_ref()) {
+        Ok(Some(_)) => h.mode = "hold".into(),
+        Ok(None) => h.mode = "tap".into(),
+        Err(note) => {
+            h.mode = "tap".into();
+            h.hold_note = Some(note);
+        }
+    }
+    h
 }
 
 static RT: OnceLock<Mutex<Runtime>> = OnceLock::new();
@@ -430,7 +457,54 @@ fn apply_hotkey(app: &AppHandle, requested: &str) {
     }
     let mut r = rt();
     r.registered = registered;
-    r.hotkey = HotkeyStatus { requested, active, error };
+    r.hotkey = HotkeyStatus { requested, active, error, ..Default::default() };
+    if let Some(note) = hotkey_status(&r).hold_note {
+        debug_log(&format!("hotkey: {note}"));
+    }
+}
+
+/// The registered hotkey was pressed. Tap mode toggles now; hold mode starts one
+/// short-lived watcher that toggles only if the key is still down after `hold_ms`. Mode
+/// and duration are read at each press, so saved settings apply without a restart.
+fn on_hotkey_pressed(app: &AppHandle) {
+    let plan = {
+        let r = rt();
+        hold::plan(r.config.hotkey_mode == HotkeyMode::Hold, r.config.hold_ms, r.registered.as_ref())
+    };
+    let Ok(Some((vk, hold_for))) = plan else {
+        // Tap mode, or hold mode that cannot follow this key (falls back to tap; the
+        // status shows `hold_note`).
+        toggle(app);
+        return;
+    };
+    if BUSY.load(Ordering::SeqCst) || QUITTING.load(Ordering::SeqCst) {
+        debug_log("hotkey: hold ignored, a toggle is running");
+        return;
+    }
+    if HOLD_WATCH.swap(true, Ordering::SeqCst) {
+        return; // a watcher is already running for this press
+    }
+    let turning_on = !ACTIVE.load(Ordering::SeqCst);
+    set_tooltip(app, if turning_on { "HoldMyRAM: keep holding to turn on..." } else { "HoldMyRAM: keep holding to turn off..." });
+    let worker_app = app.clone();
+    let spawned = std::thread::Builder::new().name("hold".into()).spawn(move || {
+        let t0 = std::time::Instant::now();
+        let outcome = hold::watch_hold(hold_for, hold::STEP, || hold::key_down(vk), || t0.elapsed(), std::thread::sleep);
+        HOLD_WATCH.store(false, Ordering::SeqCst);
+        match outcome {
+            // Same path as a tap; the foreground app is captured now, at confirmation.
+            hold::HoldOutcome::Confirmed => toggle(&worker_app),
+            hold::HoldOutcome::Released => {
+                debug_log("hotkey: released before the hold time; nothing done");
+                restore_idle_tooltip(&worker_app);
+            }
+        }
+    });
+    if let Err(e) = spawned {
+        HOLD_WATCH.store(false, Ordering::SeqCst);
+        debug_log(&format!("hotkey: could not start the hold watcher ({e}); nothing done"));
+        restore_idle_tooltip(app);
+    }
 }
 
 #[derive(Serialize)]
@@ -447,6 +521,14 @@ pub(crate) struct StateView {
     tutorial_seen: bool,
     /// Built-in and user profiles, built-ins first (see `profile_cmds::ProfileInfo`).
     profiles: Vec<profile_cmds::ProfileInfo>,
+    /// A Windows toast can be shown here (Windows 10+, and no toast has failed or been
+    /// found turned off in Windows settings since start).
+    toast_available: bool,
+    /// Why toasts are not available (or the last toast problem), for the UI.
+    toast_error: Option<String>,
+    /// This build reads and applies `notify_style` / `notify_sound` (always true here; lets
+    /// the UI tell it apart from an older backend).
+    notify_settings_loaded: bool,
 }
 
 fn state_view() -> StateView {
@@ -456,7 +538,10 @@ fn state_view() -> StateView {
         warning: r.warning.clone(),
         active: ACTIVE.load(Ordering::SeqCst),
         busy: BUSY.load(Ordering::SeqCst),
-        hotkey: r.hotkey.clone(),
+        hotkey: hotkey_status(&r),
+        toast_available: notify::toast_available(),
+        toast_error: notify::toast_error(),
+        notify_settings_loaded: true,
         last_report: r.last_detail.clone(),
         config_path: config::config_path().display().to_string(),
         app_dir: config::app_dir().display().to_string(),
@@ -759,6 +844,13 @@ fn helper_lock_is_free_and_empty() -> bool {
     HELPER.try_lock().map(|g| g.is_none()).unwrap_or(false)
 }
 
+/// Tooltip only (the icon stays as it is).
+fn set_tooltip(app: &AppHandle, tooltip: &str) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_tooltip(Some(tooltip));
+    }
+}
+
 fn set_tray(app: &AppHandle, active: bool, tooltip: &str) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_tooltip(Some(tooltip));
@@ -821,6 +913,13 @@ fn toggle(app: &AppHandle) {
         } else if !turning_on && !report.failed.is_empty() {
             tip = format!("HoldMyRAM: off, {} item(s) could not be restored", report.failed.len());
         }
+        // Notification (detached child; returns at once). Settings read now, so a save
+        // made during the toggle applies.
+        let (style, sound, set) = {
+            let r = rt();
+            (r.config.notify_style, r.config.notify_sound, r.config.notify_sound_set)
+        };
+        notify::show(style, notify::message(&report, turning_on, sound).with_sound_set(set));
         {
             let mut r = rt();
             r.last_report = report.summary();
@@ -970,6 +1069,30 @@ fn debug_log(msg: &str) {
 }
 
 fn main() {
+    // Notification child: show one notification and exit (never builds the app).
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(parsed) = notify::parse_child_args(&args) {
+        let code = match parsed {
+            Ok((mode, note)) => notify_child::run(mode, &note),
+            Err(e) => {
+                debug_log(&format!("notify: refused arguments: {e}"));
+                notify::EXIT_BAD_ARGS
+            }
+        };
+        std::process::exit(code);
+    }
+    // Sound-preview child: play one sound and exit.
+    if let Some(parsed) = notify::parse_sound_args(&args) {
+        let code = match parsed {
+            Ok(req) => notify_child::run_sound(&req),
+            Err(e) => {
+                debug_log(&format!("notify: refused sound arguments: {e}"));
+                notify::EXIT_BAD_ARGS
+            }
+        };
+        std::process::exit(code);
+    }
+    drop(args);
     // Self-update bookkeeping (wait for the previous version to exit, remove leftovers).
     update_cmds::early_startup();
     let app = tauri::Builder::default()
@@ -978,7 +1101,7 @@ fn main() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
                     if event.state() == ShortcutState::Pressed {
-                        toggle(app);
+                        on_hotkey_pressed(app);
                     }
                 })
                 .build(),
@@ -994,7 +1117,8 @@ fn main() {
             system_cmds::get_autostart, system_cmds::set_autostart, system_cmds::set_tutorial_seen,
             system_cmds::webview2_status,
             update_cmds::update_status, update_cmds::check_for_update, update_cmds::download_update,
-            update_cmds::install_update, update_cmds::open_release_page
+            update_cmds::install_update, update_cmds::open_release_page,
+            notify::test_notification, notify::preview_sound
         ])
         .setup(|app| {
             let open = MenuItem::with_id(app, "open", "Open HoldMyRAM", true, None::<&str>)?;

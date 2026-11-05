@@ -44,6 +44,8 @@ function renderSettings() {
     hs.className = 'status-line bad-text';
     hs.textContent = h && h.error ? h.error : '';
   }
+  renderHotkeyMode(h);
+  renderNotify();
   const ac = S.cfg.auto_check_updates !== false, ad = S.cfg.auto_download_updates !== false;
   $('set-autocheck').checked = ac;
   $('set-autocheck-t').textContent = ac ? 'On' : 'Off';
@@ -56,6 +58,128 @@ function renderSettings() {
   $('about-text').textContent = 'HoldMyRAM' + (u && u.current ? ' version ' + u.current : '') +
     '. A small tray app that frees RAM on demand.' + (u && u.repo ? ' Source: ' + u.repo + '.' : '');
 }
+
+/* ---------- hotkey mode and notifications (drafts; the test applies at once) ---------- */
+
+function renderHotkeyMode(h) {
+  const hold = S.cfg.hotkey_mode === 'hold';
+  $('hk-mode-tap').checked = !hold;
+  $('hk-mode-hold').checked = hold;
+  const ms = clampHold(S.cfg.hold_ms);
+  $('set-hold').value = ms;
+  $('set-hold').disabled = !hold;
+  $('hold-field').classList.toggle('disabled', !hold);
+  $('hold-val').textContent = fmtSec(ms) + ' s';
+  $('hold-inline').textContent = fmtSec(ms);
+  const note = h && h.hold_note;
+  const n = $('hold-note');
+  n.hidden = !note;
+  n.textContent = note ? String(note) : '';
+}
+
+function renderNotify() {
+  const style = S.cfg.notify_style;
+  $('nt-toast').checked = style === 'toast';
+  $('nt-popup').checked = style === 'popup';
+  $('nt-off').checked = style === 'off';
+  $('set-sound').checked = !!S.cfg.notify_sound;
+  $('set-sound').disabled = style === 'off';
+  const noToast = S.state && S.state.toast_available === false;
+  $('toast-na').hidden = !noToast;
+  const off = style === 'off';
+  $('nt-test-on').disabled = off || ntBusy;
+  $('nt-test-off').disabled = off || ntBusy;
+  $('set-sndset').value = S.cfg.notify_sound_set;
+  $('snd-prev-on').disabled = sndBusy;
+  $('snd-prev-off').disabled = sndBusy;
+  const hint = $('snd-hint');
+  hint.hidden = !(off || !S.cfg.notify_sound);
+  hint.textContent = off
+    ? 'Off means no message and no sound when HoldMyRAM turns on or off. You can still hear the sounds here.'
+    : 'Sounds are off. Turn on "Play a short sound" to hear this when HoldMyRAM turns on or off.';
+}
+
+let sndBusy = false;
+function sndMsg(text, kind) {
+  const m = $('snd-msg');
+  m.className = 'status-line ' + (kind === 'ok' ? 'ok-text' : kind === 'bad' ? 'bad-text' : 'muted');
+  m.textContent = text;
+}
+async function runSoundPreview(kind) {
+  if (sndBusy) return;
+  sndBusy = true; renderNotify();
+  sndMsg('Playing...', 'muted');
+  const started = Date.now();
+  let err = null;
+  try { await invoke('preview_sound', { set: S.cfg.notify_sound_set, kind }); }
+  catch (e) { err = e; }
+  // Keep the buttons off for about a second so they cannot be spammed.
+  const wait = Math.max(0, 1000 - (Date.now() - started));
+  if (wait) await new Promise(r => setTimeout(r, wait));
+  sndBusy = false; renderNotify();
+  if (err) sndMsg('The sound could not be played: ' + err, 'bad');
+  else sndMsg('Played the "turn ' + kind + '" sound.', 'ok');
+}
+$('snd-prev-on').onclick = () => runSoundPreview('on');
+$('snd-prev-off').onclick = () => runSoundPreview('off');
+$('set-sndset').onchange = e => { S.cfg.notify_sound_set = e.target.value; $('snd-msg').textContent = ''; renderHeader(); renderNotify(); };
+
+let ntBusy = false;
+function savedNotify() {
+  try {
+    const c = JSON.parse(S.savedJson);
+    return { s: c.notify_style, snd: c.notify_sound, set: c.notify_sound_set };
+  } catch (_) { return null; }
+}
+function ntMsg(text, kind, withSave) {
+  const m = $('nt-msg');
+  m.className = 'status-line ' + (kind === 'ok' ? 'ok-text' : kind === 'bad' ? 'bad-text' : 'muted');
+  m.textContent = text;
+  if (withSave) {
+    const b = el('button', '', 'Save now');
+    b.type = 'button';
+    b.onclick = async () => { await save(); runNotifyTest(withSave); };
+    m.append(' ', b);
+  }
+}
+async function runNotifyTest(kind) {
+  const sv = savedNotify();
+  const changed = sv && (sv.s !== S.cfg.notify_style || sv.snd !== S.cfg.notify_sound || sv.set !== S.cfg.notify_sound_set);
+  if (changed) {
+    ntMsg('The test uses your saved settings, not the unsaved changes above. Save first to try the new ones. ', 'muted', kind);
+    return;
+  }
+  ntBusy = true; renderNotify();
+  ntMsg('Showing a test...', 'muted');
+  try {
+    await invoke('test_notification', { kind });
+    ntMsg('Sent a "turned ' + kind + '" test with your saved settings.', 'ok');
+  } catch (e) {
+    ntMsg('The test could not be shown: ' + e, 'bad');
+  }
+  ntBusy = false; renderNotify();
+}
+$('nt-test-on').onclick = () => runNotifyTest('on');
+$('nt-test-off').onclick = () => runNotifyTest('off');
+
+function onNotifyDraft() {
+  $('nt-msg').textContent = '';
+  renderHeader();
+  renderNotify();
+}
+for (const id of ['nt-toast', 'nt-popup', 'nt-off']) {
+  $(id).onchange = e => { if (e.target.checked) { S.cfg.notify_style = e.target.value; onNotifyDraft(); } };
+}
+$('set-sound').onchange = e => { S.cfg.notify_sound = e.target.checked; onNotifyDraft(); };
+for (const id of ['hk-mode-tap', 'hk-mode-hold']) {
+  $(id).onchange = e => { if (e.target.checked) { S.cfg.hotkey_mode = e.target.value; renderHeader(); renderSettings(); } };
+}
+$('set-hold').oninput = e => {
+  S.cfg.hold_ms = clampHold(e.target.value);
+  renderHeader();
+  $('hold-val').textContent = fmtSec(S.cfg.hold_ms) + ' s';
+  $('hold-inline').textContent = fmtSec(S.cfg.hold_ms);
+};
 
 /* ---------- draft fields ---------- */
 

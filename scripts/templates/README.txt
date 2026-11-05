@@ -58,12 +58,16 @@ How to uninstall
 4. Optional: if you ticked Settings > Start HoldMyRAM when I sign in (off by default), remove the "HoldMyRAM" value
    under HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run
    (Task Manager > Startup apps also lets you disable it).
-Nothing else is installed on your system.
+5. Optional: if you used Windows notifications (Settings > Notifications), delete
+   the key HKEY_CURRENT_USER\Software\Classes\AppUserModelId\HoldMyRAM
+   and the file %LOCALAPPDATA%\HoldMyRAM\notify-icon.png.
+Apart from those optional registry entries, nothing else is installed on your system.
 
 Limits
 ------
 - Unsigned: expect the SmartScreen and "Unknown publisher" prompts above.
-- Not an installer and has no auto-update; replace the folder to upgrade.
+- Not an installer. It checks GitHub Releases for updates and can install them
+  itself (see Updates above); you can also replace the folder by hand.
 - Windows x64 only.
 - Closing apps can lose unsaved work in them. Review the ratings first, and
   treat Dangerous items with care.

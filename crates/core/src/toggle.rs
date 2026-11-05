@@ -110,6 +110,12 @@ pub struct Item {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<Reason>,
     pub detail: String,
+    /// Closed or killed processes only: the process's working set in the snapshot taken
+    /// just before acting. An upper bound on what closing it freed (shared pages count
+    /// in every process that maps them). None for suspended processes (their memory
+    /// stays allocated), services, tasks, skips and failures.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ram_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -178,12 +184,12 @@ fn reason_code(r: Reason) -> String {
 }
 
 fn item(pid: u32, name: &str, method: Option<Method>, detail: impl Into<String>) -> Item {
-    Item { pid, name: name.to_string(), kind: SelectionKind::Process, method, reason: None, detail: detail.into() }
+    Item { pid, name: name.to_string(), kind: SelectionKind::Process, method, reason: None, detail: detail.into(), ram_bytes: None }
 }
 
 fn admin_item(kind: SelectionKind, name: &str, pid: u32, reason: Option<Reason>, detail: impl Into<String>) -> Item {
     let method = Some(kind.default_method());
-    Item { pid, name: name.to_string(), kind, method, reason, detail: detail.into() }
+    Item { pid, name: name.to_string(), kind, method, reason, detail: detail.into(), ram_bytes: None }
 }
 
 fn skip_reason(why: &Skipped) -> (&'static str, Reason) {
@@ -542,11 +548,17 @@ fn apply_processes(opts: &Options, selections: &[Selection], procs: &[ProcInfo],
         }
     }
 
+    let ws: HashMap<u32, u64> = procs.iter().map(|p| (p.pid, p.working_set_bytes)).collect();
     for e in &journal.entries[first_new..] {
         let detail = e.note.clone().unwrap_or_default();
-        let it = item(e.pid, &e.name, Some(e.method), detail);
+        let mut it = item(e.pid, &e.name, Some(e.method), detail);
         match e.state {
-            EntryState::Done => report.acted.push(it),
+            EntryState::Done => {
+                if matches!(e.method, Method::Close | Method::Kill) {
+                    it.ram_bytes = ws.get(&e.pid).copied().filter(|&b| b > 0);
+                }
+                report.acted.push(it)
+            }
             _ => report.failed.push(it),
         }
     }
@@ -1265,8 +1277,11 @@ mod tests {
         assert_eq!(r.acted.len(), 1, "{}", r.details());
         assert_eq!(r.acted[0].detail, "closed gracefully");
         assert!(start.elapsed() < Duration::from_secs(9), "should not wait the full grace");
+        // Closed: its working set from the apply-time snapshot is reported.
+        assert!(r.acted[0].ram_bytes.is_some_and(|b| b > 0), "{:?}", r.acted[0]);
         let r = revert_with(&o, std::process::id());
         assert_eq!(r.acted.len(), 1, "{}", r.details());
+        assert!(r.acted[0].ram_bytes.is_none(), "restores carry no RAM figure");
     }
 
     #[test]
@@ -1289,6 +1304,7 @@ mod tests {
         let o = opts("suspend");
         let r = apply_with(&o, &sel(&s.name, Method::Suspend), None, std::process::id());
         assert_eq!(r.acted.len(), 1, "{}", r.details());
+        assert!(r.acted[0].ram_bytes.is_none(), "a suspended process frees nothing");
         // Proof it is really frozen: a WM_CLOSE is not processed while suspended.
         let h = ProcHandle::open(s.pid(), ProcHandle::rights_for(Method::Kill)).unwrap();
         actions::post_close(&HashSet::from([s.pid()]));

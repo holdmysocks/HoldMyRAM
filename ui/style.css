@@ -340,3 +340,29 @@ dialog.tour { max-width: 480px; padding: var(--s5); }
 .adv-top .adv-tabs { flex: 1; }
 .adv-actions { display: flex; gap: var(--s2); padding-top: var(--s3); }
 @media (max-width: 640px) { .field { grid-template-columns: 1fr; gap: var(--s1); } }
+
+/* option groups (radio lists) */
+.optgroup { border: 0; margin: var(--s3) 0 0; padding: 0; min-width: 0; }
+.optgroup legend { font-weight: 600; padding: 0; margin-bottom: var(--s2); }
+/* Radio cards: keep the card's side padding and centre the radio against the whole text block. */
+.optgroup .opt { display: flex; gap: var(--s3); align-items: center; padding: var(--s3) var(--s4, 16px); cursor: pointer; }
+.optgroup .opt input { margin: 0; }
+/* Make the chosen card obvious without relying on the radio dot alone. */
+.optgroup .opt:has(input:checked) { border-color: var(--accent); background: var(--accent-bg); }
+.opt > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hold-field { margin-left: calc(18px + var(--s3)); grid-template-columns: 90px 1fr; }
+.hold-field input[type=range] { width: 240px; max-width: 100%; accent-color: var(--accent); }
+.hold-field output { min-width: 3.5em; font-variant-numeric: tabular-nums; font-weight: 600; }
+.hold-field.disabled { opacity: .55; }
+#toast-na { margin-top: var(--s2); }
+#nt-msg:empty { display: none; }
+#snd-msg:empty { display: none; }
+#snd-hint, #snd-msg { margin-left: 202px; }
+@media (max-width: 640px) { #snd-hint, #snd-msg { margin-left: 0; } }
+.snd-field { align-items: start; }
+.snd-field > label { padding-top: 6px; }
+.snd-field .ctl { flex-direction: column; align-items: flex-start; }
+.btn-row { display: flex; gap: var(--s2); flex-wrap: wrap; }
+.snd-field .ctl { gap: var(--s1); }
+.snd-field select { margin: 0; }
+.snd-field .btn-row { margin-top: var(--s1); } /* the field's own gap is enough; the generic row margin doubled it */

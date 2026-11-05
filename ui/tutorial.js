@@ -12,7 +12,7 @@ const TOUR_STEPS = [
       'Recommended+ goes further and needs admin approval. You can also make your own copy and change it.'],
     art: artProfiles },
   { title: 'One switch, one hotkey',
-    body: ['Press the big button or your hotkey (Ctrl+Alt+R by default) to turn on. Press it again to turn off.',
+    body: ['Press the big button or your hotkey (Ctrl+Alt+R by default) to turn on. Press it again to turn off. If you press it by accident, Settings has a hold-to-confirm mode for the hotkey.',
       'The app you are using is never closed. Everything is restored when you turn off, or when you quit.'],
     art: artToggle },
   { title: 'Admin approval, when asked',
@@ -25,7 +25,7 @@ const TOUR_STEPS = [
     art: artBadges },
   { title: 'Tray, sign-in and updates',
     body: ['Closing this window keeps HoldMyRAM in the tray. Right-click the tray icon to turn on, off or quit.',
-      'In Settings you can start it when you sign in and check for updates. You can replay this tutorial there too.'],
+      'In Settings you can start it when you sign in and check for updates. You can replay this tutorial there too. Notifications (Windows notification, small pop-up or none) are also chosen in Settings.'],
     art: artTray },
 ];
 
